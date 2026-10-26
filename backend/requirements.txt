@@ -1,0 +1,16 @@
+fastapi==0.162.0
+uvicorn==0.34.2
+pydantic==2.11.4
+pydantic-settings==2.9.1
+SQLAlchemy==2.0.41
+alembic==1.15.2
+psycopg[binary]==3.2.9
+celery[redis]==5.5.2
+redis==5.2.1
+Pillow==13.0.0
+python-multipart==0.0.32
+pypdf==6.21.2
+pytest==9.1.1
+httpx==0.28.1
+ruff==0.11.10
+starlette==1.10.0
