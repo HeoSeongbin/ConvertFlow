@@ -5,6 +5,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from app.models.job import Job, JobFile, Result
 from app.schemas.options import ConversionOptions
+from app.services.errors import MANUAL_RETRY_CODES
+from app.storage.local import storage
 
 WORKSPACE_COOKIE = "cf_workspace"
 
@@ -29,18 +31,32 @@ def authorized(db, job_id, token=None, workspace=None):
     )
 
 
+def utc(value):
+    return (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
+    )
+
+
 def iso(value):
-    return value.replace(tzinfo=timezone.utc).isoformat() if value else None
+    return utc(value).isoformat() if value else None
 
 
 def serialize(job, db=None):
     elapsed = (
-        (job.completed_at - job.started_at).total_seconds()
+        (utc(job.completed_at) - utc(job.started_at)).total_seconds()
         if job.completed_at and job.started_at
         else None
     )
     result = {
         "jobId": job.job_id,
+        "runGeneration": job.run_generation,
+        "attemptCount": job.attempt_count,
+        "autoRetryCount": job.auto_retry_count,
+        "nextRetryAt": iso(job.next_retry_at),
+        "canRetry": job.status == "FAILED" and job.error_code in MANUAL_RETRY_CODES,
+        "canCancel": job.status in {"QUEUED", "PROCESSING", "RETRY_WAIT"},
         "status": job.status,
         "stage": job.stage,
         "progress": job.progress,
@@ -61,6 +77,25 @@ def serialize(job, db=None):
         result["options"] = ConversionOptions.model_validate(job.options).model_dump(
             by_alias=True
         )
+        files = list(
+            db.scalars(
+                select(JobFile)
+                .where(JobFile.job_id == job.job_id)
+                .order_by(JobFile.sort_order)
+            )
+        )
+        available = bool(files) and all(
+            storage.path(file.storage_path).is_file() for file in files
+        )
+        result["sourceAvailable"] = available
+        result["canRetry"] = result["canRetry"] and available
+        result["retryBlockedReason"] = (
+            "원본 파일이 없습니다."
+            if not available
+            else "입력 또는 옵션을 변경해야 하는 오류입니다."
+            if job.status == "FAILED" and not result["canRetry"]
+            else None
+        )
         result["files"] = [
             {
                 "fileId": f.file_id,
@@ -71,11 +106,7 @@ def serialize(job, db=None):
                 "sortOrder": f.sort_order,
                 "checksum": f.checksum,
             }
-            for f in db.scalars(
-                select(JobFile)
-                .where(JobFile.job_id == job.job_id)
-                .order_by(JobFile.sort_order)
-            )
+            for f in files
         ]
         output = db.scalar(select(Result).where(Result.job_id == job.job_id))
         result["result"] = (

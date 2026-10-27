@@ -61,3 +61,26 @@ conversion_job_file, conversion_result, conversion_event를 추가하고 options
 
 ## ADR-019 Phase 2 범위 — 채택
 실패 원인은 Job과 Event에 보존하고 임시 결과를 비공개 처리한다. 재시도·취소·Attempt 모델은 Phase 3 범위이며 이번에 제공하지 않는다. 기존에 Attempt/재시도 이력이 없었으므로 이를 만들어낸 것으로 표시하지 않는다. 다음 Phase에서 동일 Job 아래 새 Attempt를 추가하고 기존 실패 이벤트를 유지해야 한다. UI는 단일 콘솔 내 업로드/이력 전환을 사용하며 Router·전역 상태·차트는 필요한 후속 Phase에 도입한다.
+
+
+## ADR-020 Phase 3 오류 분류와 재시도 정책 — 채택
+transient 저장소 오류, MemoryError, soft time limit을 자동 재시도한다. 최대 3회, base 5초 지수 증가, 상한 300초, 각 구간의 절반~전체 범위 equal jitter를 사용한다. 권한 오류는 자동 반복하지 않고 운영자가 복구한 뒤 수동 재시도할 수 있다. 알려지지 않은 CONVERSION_FAILED도 자동 반복하지 않되 명시적 수동 재처리를 허용한다. 잘못된 입력/옵션·손상·SOURCE_MISSING은 같은 입력으로 재시도하지 않는다. DB가 완전히 끊겨 실패 상태를 저장할 수 없거나 hard kill이면 Phase 4의 복구가 필요하다.
+
+## ADR-021 Attempt 이력과 마이그레이션 — 채택
+각 Claim에서 별도 UUID Attempt를 생성하고 실패 코드는 Attempt와 Event에 보존한다. 자동/수동 재시도는 동일 Job의 다음 Attempt이며 원본과 옵션을 바꾸지 않는다. 수동 재시도는 자동 재시도 예약 횟수만 초기화한다. lifetime attempt_count와 실행 세대는 계속 증가한다. 0003은 기존 실행을 LEGACY로 이관하고 Worker UNKNOWN/누락 시간 null을 유지한다. 대기 중 취소는 실행 사실이 없으므로 Attempt를 만들지 않는다. 이력 유실을 막기 위해 downgrade를 차단한다.
+
+## ADR-022 메시지 세대와 변경 요청 CAS — 채택
+메시지는 [Job UUID, run_generation]을 전달한다. 구형 단일 인자는 1세대로만 간주하여 새로운 수동/자동 재시도를 오래된 메시지가 Claim하지 못하게 한다. Job Claim과 active_attempt_id 설정·Attempt 추가를 한 트랜잭션으로 처리한다. 진행/완료/실패 갱신은 동일 세대와 활성 Attempt만 허용한다. retry/cancel API는 expectedGeneration을 받아 오래된 화면·중복 요청을 409로 처리한다. Result는 Job 고유 제약과 Attempt FK를 갖고 경로에도 Attempt UUID를 사용한다. Lease 재획득을 구현한 것은 아니다.
+
+## ADR-023 DB 기반 재시도 예약 — 채택
+Celery retry/ETA 대신 실패 Attempt 종료, RETRY_WAIT, 다음 세대 Outbox·available_at을 같은 DB 트랜잭션으로 저장한다. 긴 ETA의 브로커 redelivery 문제를 피하고 API/Worker/Dispatcher 재시작에도 예약을 DB에 남긴다. 기존 Outbox의 Job 단독 고유 제약은 (job_id,generation)으로 바꿔 재시도 발행 이력을 보존한다. 취소·옛 세대 이벤트는 발행하지 않고 처리 완료 표시해 재발행을 억제한다. published_at은 이 경우 폐기 처리 표시도 포함하므로 실제 브로커 발행 통계로 사용하면 안 된다.
+
+## ADR-024 QUEUED 커밋과 발행 순서 — 실제 통합 테스트로 수정
+첫 PostgreSQL/Redis 통합 테스트에서 RETRY_WAIT→QUEUED 갱신과 publish를 같은 트랜잭션에 두면 즉시 소비한 Worker가 커밋 전 RETRY_WAIT을 보고 조건부 Claim을 건너뛰어 메시지가 소모되는 문제를 발견했다. Dispatcher를 준비 트랜잭션(QUEUED 커밋)과 발행 트랜잭션으로 분리했다. 다른 DB 연결에서 publish 시점에 QUEUED가 보이는 회귀 테스트를 추가했고 실제 자동 재시도·상한 도달·수동 재처리를 재검증했다. 테스트 중 남은 Job은 취소 서비스로 종료했으며 자동 장애 복구를 수행한 것으로 표시하지 않는다.
+
+## ADR-025 협조적 취소와 게시 경합 — 채택
+대기/예약 중 취소는 즉시 CANCELLED, 실행 중은 CANCEL_REQUESTED로 둔다. Worker는 입력 파일·페이지 경계와 결과 게시 직전에 확인한다. 최종 게시와 취소 요청은 PostgreSQL Job row lock으로 직렬화한다. 성공이 먼저면 취소를 409로 거부하고 취소가 먼저면 Result/SUCCESS를 만들지 않는다. 프로세스 revoke/terminate를 사용하지 않는다. 처리 중 취소에 실패 오류가 겹쳐도 취소를 우선한다. SQLite에서 읽은 naive 시각과 즉시 생성한 UTC-aware 시각을 안전하게 비교하도록 UTC 정규화도 추가했다.
+
+## ADR-026 장애 주입 테스트 경계 — 채택
+일반 Dispatcher를 잠시 멈추고 전용 큐의 Celery embedded solo test worker를 API 컨테이너의 별도 프로세스에서 기동한다. 실제 Redis/PostgreSQL을 사용하며, 제품 Worker 코드를 실행하되 해당 테스트 프로세스에만 transient 저장소 오류·게시 직전 정지를 주입한다. 제품 API에 오류 주입 옵션을 추가하지 않는다. 종료 시 Dispatcher를 반드시 재기동한다. 별도로 실제 Compose prefork Worker + 브라우저에서도 테스트 Job의 저장소 권한 오류 후 원상복구·수동 재시도와 대기 취소를 검증했다. 이는 Worker kill/다중 Worker Lease 검증이 아니다.
+참고: [Celery 5.5.2 test worker](https://docs.celeryq.dev/en/v5.5.2/reference/celery.contrib.testing.worker.html).

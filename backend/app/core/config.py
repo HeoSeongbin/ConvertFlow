@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     max_pages: int = 100
     max_total_pixels: int = 100_000_000
     max_total_upload_bytes: int = 100 * 1024 * 1024
+    max_auto_retries: int = 3
+    retry_base_seconds: int = 5
+    retry_max_seconds: int = 300
     cors_origin: str = "http://localhost:8080"
 
 

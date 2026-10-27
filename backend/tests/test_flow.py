@@ -7,6 +7,7 @@ from pypdf import PdfReader
 from sqlalchemy import select
 from app.main import app
 from app.core.db import Session
+from app.core.config import settings
 from app.models.job import Job, Outbox
 from app.tasks.convert import convert_job
 from app.services.dispatcher import dispatch_once
@@ -95,8 +96,12 @@ def test_dispatch_retries_without_losing_job():
 
 def test_conversion_failure_not_downloadable():
     job = upload()
-    with patch(
-        "app.tasks.convert.ImagePDFConverter.convert", side_effect=OSError("disk full")
+    with (
+        patch(
+            "app.tasks.convert.ImagePDFConverter.convert",
+            side_effect=OSError("disk full"),
+        ),
+        patch.object(settings, "max_auto_retries", 0),
     ):
         convert_job.run(job["jobId"])
     headers = {"X-Job-Token": job["accessToken"]}

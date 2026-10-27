@@ -14,11 +14,11 @@ from fastapi import (
     Query,
 )
 from fastapi.responses import FileResponse
-from pydantic import ValidationError
+from pydantic import ValidationError, BaseModel, Field, ConfigDict
 from sqlalchemy import select, func, or_
 from app.core.db import Session
 from app.core.config import settings
-from app.models.job import Job, JobFile, Outbox, Result, Event
+from app.models.job import Job, JobFile, Outbox, Result, Event, Attempt
 from app.storage.local import storage
 from app.services.validation import validate_image, InvalidInput
 from app.services.jobs import authorized, serialize, token_hash, WORKSPACE_COOKIE, iso
@@ -156,13 +156,25 @@ def list_jobs(
     request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(10, alias="pageSize", ge=1, le=50),
-    status: Literal["QUEUED", "PROCESSING", "SUCCESS", "FAILED"] | None = None,
+    status: Literal[
+        "QUEUED",
+        "PROCESSING",
+        "SUCCESS",
+        "FAILED",
+        "RETRY_WAIT",
+        "CANCEL_REQUESTED",
+        "CANCELLED",
+    ]
+    | None = None,
     search: str = Query("", max_length=120),
+    retry_center: bool = Query(False, alias="retryCenter"),
 ):
     workspace = request.cookies.get(WORKSPACE_COOKIE)
     if not workspace:
         return {"items": [], "total": 0, "page": page, "pageSize": page_size}
     filters = [Job.workspace_hash == token_hash(workspace)]
+    if retry_center:
+        filters.append(Job.status.in_(["FAILED", "RETRY_WAIT"]))
     if status:
         filters.append(Job.status == status)
     if search.strip():
@@ -182,8 +194,31 @@ def list_jobs(
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
+        jobs = list(jobs)
+        from app.services.errors import MANUAL_RETRY_CODES
+
+        eligible = [
+            job.job_id
+            for job in jobs
+            if job.status == "FAILED" and job.error_code in MANUAL_RETRY_CODES
+        ]
+        source_files = {}
+        if eligible:
+            for file in db.scalars(select(JobFile).where(JobFile.job_id.in_(eligible))):
+                source_files.setdefault(file.job_id, []).append(file)
+        items = []
+        for job in jobs:
+            item = serialize(job)
+            if item["canRetry"]:
+                files = source_files.get(job.job_id, [])
+                available = bool(files) and all(
+                    storage.path(file.storage_path).is_file() for file in files
+                )
+                item["canRetry"] = available
+                item["sourceAvailable"] = available
+            items.append(item)
         return {
-            "items": [serialize(job) for job in jobs],
+            "items": items,
             "total": total,
             "page": page,
             "pageSize": page_size,
@@ -222,6 +257,7 @@ def get_events(
             "items": [
                 {
                     "eventId": e.event_id,
+                    "attemptId": e.attempt_id,
                     "sequence": e.sequence,
                     "type": e.event_type,
                     "message": e.message,
@@ -265,3 +301,81 @@ def download(
         return FileResponse(
             path, media_type="application/pdf", filename=f"convertflow-{job_id}.pdf"
         )
+
+
+class ExecutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_generation: int = Field(alias="expectedGeneration", ge=1, strict=True)
+
+
+@router.post("/{job_id}/retry", status_code=202)
+def retry(
+    job_id: UUID,
+    body: ExecutionRequest,
+    request: Request,
+    x_job_token: str | None = Header(default=None),
+):
+    from app.services.lifecycle import request_retry
+
+    with Session.begin() as db:
+        authorized(db, job_id, x_job_token, request.cookies.get(WORKSPACE_COOKIE))
+        return serialize(request_retry(db, job_id, body.expected_generation))
+
+
+@router.post("/{job_id}/cancel", status_code=202)
+def cancel(
+    job_id: UUID,
+    body: ExecutionRequest,
+    request: Request,
+    x_job_token: str | None = Header(default=None),
+):
+    from app.services.lifecycle import request_cancel
+
+    with Session.begin() as db:
+        authorized(db, job_id, x_job_token, request.cookies.get(WORKSPACE_COOKIE))
+        return serialize(request_cancel(db, job_id, body.expected_generation))
+
+
+@router.get("/{job_id}/attempts")
+def attempts(
+    job_id: UUID,
+    request: Request,
+    x_job_token: str | None = Header(default=None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, alias="pageSize", ge=1, le=100),
+):
+    with Session() as db:
+        authorized(db, job_id, x_job_token, request.cookies.get(WORKSPACE_COOKIE))
+        count = db.scalar(
+            select(func.count())
+            .select_from(Attempt)
+            .where(Attempt.job_id == str(job_id))
+        )
+        rows = db.scalars(
+            select(Attempt)
+            .where(Attempt.job_id == str(job_id))
+            .order_by(Attempt.attempt_number.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        return {
+            "items": [
+                {
+                    "attemptId": a.attempt_id,
+                    "attemptNumber": a.attempt_number,
+                    "generation": a.generation,
+                    "origin": a.origin,
+                    "workerName": a.worker_name,
+                    "status": a.status,
+                    "startedAt": iso(a.started_at),
+                    "finishedAt": iso(a.finished_at),
+                    "errorCode": a.error_code,
+                    "errorMessage": a.error_message,
+                    "retryable": a.retryable,
+                }
+                for a in rows
+            ],
+            "total": count,
+            "page": page,
+            "pageSize": page_size,
+        }

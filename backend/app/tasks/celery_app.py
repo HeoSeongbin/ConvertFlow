@@ -14,7 +14,12 @@ celery_app.conf.update(
     task_soft_time_limit=120,
     task_time_limit=150,
     broker_connection_retry_on_startup=True,
-    broker_transport_options={"visibility_timeout": 300},
+    broker_connection_timeout=3,
+    broker_transport_options={
+        "visibility_timeout": 300,
+        "socket_connect_timeout": 3,
+        "socket_timeout": 3,
+    },
     task_serializer="json",
     accept_content=["json"],
 )

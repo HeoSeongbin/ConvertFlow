@@ -89,4 +89,35 @@ def test_phase1_database_upgrade_preserves_existing_jobs(tmp_path):
             )
             == 0
         )
+        assert db.scalar(text("SELECT COUNT(*) FROM conversion_attempt")) == 2
+        assert (
+            db.scalar(
+                text("SELECT origin FROM conversion_attempt WHERE job_id='old-failure'")
+            )
+            == "LEGACY"
+        )
+        assert (
+            db.scalar(
+                text(
+                    "SELECT error_message FROM conversion_attempt WHERE job_id='old-failure'"
+                )
+            )
+            == "original failure detail"
+        )
+        assert (
+            db.scalar(
+                text(
+                    "SELECT attempt_count FROM conversion_job WHERE job_id='old-queued'"
+                )
+            )
+            == 0
+        )
+        assert (
+            db.scalar(
+                text(
+                    "SELECT COUNT(*) FROM conversion_result WHERE attempt_id IS NOT NULL"
+                )
+            )
+            == 1
+        )
     engine.dispose()

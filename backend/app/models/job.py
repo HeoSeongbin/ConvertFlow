@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from sqlalchemy import (
     String,
+    Boolean,
     DateTime,
     Integer,
     ForeignKey,
@@ -39,6 +40,12 @@ class Job(Base):
     total_pages: Mapped[int] = mapped_column(Integer, default=1)
     processed_pages: Mapped[int] = mapped_column(Integer, default=0)
     stage: Mapped[str] = mapped_column(String(40), default="QUEUED")
+    run_generation: Mapped[int] = mapped_column(Integer, default=1)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    active_attempt_id: Mapped[str | None] = mapped_column(String(36))
+    auto_retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retry_origin: Mapped[str] = mapped_column(String(16), default="INITIAL")
     original_filename: Mapped[str] = mapped_column(String(255))
     input_path: Mapped[str] = mapped_column(Text)
     file_size: Mapped[int] = mapped_column(Integer)
@@ -57,8 +64,12 @@ class Job(Base):
 class Outbox(Base):
     __tablename__ = "job_dispatch_outbox"
     event_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
-    job_id: Mapped[str] = mapped_column(
-        ForeignKey("conversion_job.job_id"), unique=True
+    job_id: Mapped[str] = mapped_column(ForeignKey("conversion_job.job_id"))
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (
+        UniqueConstraint("job_id", "generation", name="uq_outbox_job_generation"),
+        Index("ix_outbox_due", "published_at", "available_at"),
     )
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -83,11 +94,35 @@ class JobFile(Base):
     checksum: Mapped[str] = mapped_column(String(64))
 
 
+class Attempt(Base):
+    __tablename__ = "conversion_attempt"
+    __table_args__ = (
+        UniqueConstraint("job_id", "attempt_number"),
+        UniqueConstraint("job_id", "generation"),
+        CheckConstraint("attempt_number >= 1"),
+    )
+    attempt_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    job_id: Mapped[str] = mapped_column(ForeignKey("conversion_job.job_id"), index=True)
+    attempt_number: Mapped[int] = mapped_column(Integer)
+    generation: Mapped[int] = mapped_column(Integer)
+    origin: Mapped[str] = mapped_column(String(16))
+    worker_name: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(24))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(50))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    retryable: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class Result(Base):
     __tablename__ = "conversion_result"
     result_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     job_id: Mapped[str] = mapped_column(
         ForeignKey("conversion_job.job_id"), unique=True
+    )
+    attempt_id: Mapped[str | None] = mapped_column(
+        ForeignKey("conversion_attempt.attempt_id")
     )
     output_path: Mapped[str] = mapped_column(Text)
     file_size: Mapped[int] = mapped_column(Integer)
@@ -100,6 +135,9 @@ class Event(Base):
     __tablename__ = "conversion_event"
     event_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     job_id: Mapped[str] = mapped_column(ForeignKey("conversion_job.job_id"), index=True)
+    attempt_id: Mapped[str | None] = mapped_column(
+        ForeignKey("conversion_attempt.attempt_id")
+    )
     sequence: Mapped[int] = mapped_column(Integer)
     event_type: Mapped[str] = mapped_column(String(50))
     message: Mapped[str] = mapped_column(Text)

@@ -1,4 +1,4 @@
-# 시스템 아키텍처 — Phase 2
+# 시스템 아키텍처 — Phase 3
 ```mermaid
 flowchart LR
   Browser[React 업로드 / 작업 목록 / 상세] --> Nginx
@@ -28,10 +28,14 @@ flowchart LR
 erDiagram
   conversion_job ||--o{ conversion_job_file : inputs
   conversion_job ||--o| conversion_result : publishes
-  conversion_job ||--|| job_dispatch_outbox : dispatches
+  conversion_job ||--o{ job_dispatch_outbox : dispatches
+  conversion_job ||--o{ conversion_attempt : executes
+  conversion_attempt ||--o{ conversion_event : attributes
+  conversion_attempt ||--o| conversion_result : publishes
   conversion_job ||--o{ conversion_event : records
 ```
-Job: UUID, workspace/access 해시, 상태, 단계, options JSON, 전체/완료 파일·페이지 수, UTC 시간, 오류 코드·메시지.
+Job: UUID, workspace/access 해시, 상태, 단계, options JSON, 전체/완료 파일·페이지 수, UTC 시간, 오류 코드·메시지, run_generation, active_attempt_id, attempt_count, auto_retry_count, next_retry_at.
+Attempt: UUID, Job FK, (job_id,attempt_number) 및 (job_id,generation) 고유 제약, origin·Worker·상태·시작/종료·오류·retryable. Result와 Event는 해당 Attempt FK로 귀속한다. Outbox는 (job_id,generation) 고유 제약과 available_at 시각을 갖는다.
 JobFile: UUID, FK, 파일명, UUID 저장 경로, 크기·MIME·페이지·SHA256, sort_order. (job_id,sort_order) 고유 제약.
 Result: UUID, 고유 Job FK, 경로·크기·SHA256·페이지 수·UTC 시간.
 Event: UUID, Job FK, (job_id,sequence) 고유 제약, 타입·메시지·JSON details·UTC 시간. Job 갱신 lock 안에서 sequence를 부여하며 이력은 append-only다.
@@ -40,13 +44,25 @@ Job의 workspace_hash+created_at 복합 인덱스와 상태/각 FK 조회 인덱
 0002는 구형 단일 파일과 성공 결과를 backfill한다. 구형 오류를 그대로 보존하며 단계별 과거 이벤트를 만들어내지 않는다. LEGACY_IMPORTED 스냅샷만 추가한다. 데이터 유실이 생기는 downgrade는 차단했다.
 
 ## 상태와 진행률
-현재 상태: QUEUED → PROCESSING → SUCCESS | FAILED. UPLOADING은 프런트 전용이다.
+현재 상태: QUEUED → PROCESSING → SUCCESS | FAILED | RETRY_WAIT. RETRY_WAIT→QUEUED, FAILED→QUEUED(수동 새 세대). QUEUED/RETRY_WAIT→CANCELLED, PROCESSING→CANCEL_REQUESTED→CANCELLED. UPLOADING은 프런트 전용이다.
 단계: QUEUED(0), INPUT_VALIDATION(10), PAGE_PROCESSING(10+floor(75×완료 페이지/전체 페이지)), RESULT_VALIDATION(95), SUCCESS(100). 전체 파일 수와 페이지 수를 별도로 추적한다. 성공 결과가 검증·게시·DB 확정되기 전에는 100을 기록하지 않는다.
 
 ## 권한 경계
 신규 작업은 무작위 작업공간 capability 쿠키의 해시로 소유 범위를 제한한다. 목록은 해당 cookie 소유 작업만, 상세·이벤트·다운로드는 소유 cookie 또는 개별 Job 토큰을 확인한다. 기존 소유자를 모르는 Phase 1 작업은 목록에 자동 편입하지 않는다. 로컬 단일 사용자 MVP이며 계정 인증·다중 테넌트 서비스가 아니다.
 
 ## 중복 처리와 한계
-원자적 Claim이 중복 Worker 진입을 막고 Result Job 고유 제약이 중복 레코드를 방지한다. 완료 이벤트는 SUCCESS 확정과 함께 생성한다. 현재 상태를 되돌리는 API가 없으므로 실패·완료 이력을 덮어쓰지 않는다. Lease 만료·Worker 재획득·fencing은 아직 없다. PROCESSING 중 Worker가 죽으면 자동 복구하지 않는다. DB와 파일 이동 사이 원자성도 없으며 orphan 결과 정리·강제 종료 테스트는 Phase 4다.
+원자적 Claim은 QUEUED와 전달된 실행 세대가 일치할 때만 성공한다. Claim과 Attempt 생성은 같은 트랜잭션이다. 페이지 진행/종료 갱신은 현재 세대와 active_attempt_id가 일치해야 한다. 수동 재시도는 FAILED 및 expectedGeneration으로 CAS 갱신하고 새 세대를 생성한다. 성공 결과와 완료 이벤트는 동일 트랜잭션으로 한 번만 확정한다. 결과 경로에도 Attempt UUID를 넣어 다른 시도의 파일과 충돌하지 않는다.
 
-공유 저장소는 uploads/{job}/UUID, processing/{job}/{execution UUID}/output.pdf, results/{job}/result.pdf 구조다. 실행별 임시 경로와 전체 결과 검증을 유지한다. 자동 만료·용량 정리는 미구현이다. Redis/DB/Worker 모니터링 수치를 임의로 만들지 않는다.
+자동 재시도는 실패 Attempt를 종료하고 새 세대 Outbox + available_at + RETRY_WAIT를 한 트랜잭션으로 저장한다. Dispatcher는 ① 예약 도래 Job의 QUEUED 전환을 먼저 커밋하고 ② 별도 트랜잭션에서 Outbox를 잠그고 발행한다. 발행 전에 QUEUED가 다른 DB 연결에도 보여야 한다. 그렇지 않으면 즉시 소비한 Worker가 아직 RETRY_WAIT인 행을 건너뛰는 경합이 발생한다. 새로 도래하여 아직 RETRY_WAIT인 Outbox는 다음 준비 주기까지 발행하지 않는다. Redis 장애는 미발행 Outbox에 남겨 재시도한다. 발행 후 DB commit 실패에 따른 중복 메시지는 세대/Claim으로 막는다.
+
+취소는 DB 상태 변경이며 프로세스를 강제 종료하지 않는다. Worker가 입력 파일·페이지 경계와 최종 게시 전에 취소를 확인하고 Attempt 종료와 CANCELLED 이벤트를 함께 기록한다. 게시 직전 Job row lock으로 취소/성공 확정을 직렬화한다. 취소 요청이 먼저 확정되면 결과를 공개하지 않고, SUCCESS가 먼저 커밋되면 뒤의 취소 요청은 409다.
+
+Lease 만료·Worker 재획득은 아직 없다. 실행 세대 검증을 Lease 기반 장애 복구 보장으로 표현하지 않는다. PROCESSING/CANCEL_REQUESTED 중 Worker가 죽으면 자동 복구하지 않는다. DB와 파일 이동 사이 원자성도 없으며 orphan 결과 정리·강제 종료 테스트는 Phase 4다.
+
+공유 저장소는 uploads/{job}/UUID, processing/{job}/{execution UUID}/output.pdf, results/{job}/{attempt UUID}.pdf 구조다. 실행별 임시 경로와 전체 결과 검증을 유지한다. 자동 만료·용량 정리는 미구현이다. Redis/DB/Worker 모니터링 수치를 임의로 만들지 않는다.
+
+
+## 이전 데이터 및 테스트 경계
+0003은 기존 성공/실패/실행 중 Job을 LEGACY Attempt 하나로 보존하고 결과에 연결한다. 과거 Worker나 누락된 시간을 추정하지 않는다. 기존 이벤트는 원문을 유지하며 과거 Attempt 귀속을 임의로 채우지 않는다. 재시도/취소 적용 전 구버전 API/Worker의 작업을 마치고 함께 교체해야 한다. 실행 중 강제 교체 후 복구는 Phase 4 범위다.
+
+제품의 변환은 별도 Celery Worker가 수행한다. 장애 주입 테스트에서만 API 컨테이너의 별도 테스트 프로세스에 Celery solo test worker와 전용 큐를 사용하며 실제 Redis/PostgreSQL에 연결한다. 이때 일반 Dispatcher는 중지 후 반드시 복원한다. 테스트용 monkeypatch는 제품 API나 운영 플래그에 노출하지 않는다.

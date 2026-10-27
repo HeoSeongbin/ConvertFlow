@@ -1,0 +1,12 @@
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { api, jobHeaders, terminal, errorMessage, type AttemptPage, type Job, type JobReference } from '../../services/api';
+const origins = { INITIAL: '최초 실행', AUTO: '자동 재시도', MANUAL: '수동 재시도', LEGACY: '이전 버전 기록' };
+const states: Record<string,string> = { PROCESSING: '실행 중', SUCCESS: '성공', FAILED: '실패', CANCELLED: '취소' };
+export default function AttemptHistory({ reference, job }: { reference: JobReference; job: Job }) {
+  const [page, setPage] = useState(1);
+  const query = useQuery({ queryKey: ['attempts', reference.jobId, job.attemptCount, job.status, page], queryFn: async () => (await api.get<AttemptPage>(`/jobs/${reference.jobId}/attempts`, { headers: jobHeaders(reference), params: { page, pageSize: 10 } })).data, refetchInterval: terminal(job.status) ? false : 1500 });
+  return <section className="panel timeline-panel"><div className="panel-heading"><h2>처리 시도 이력</h2><span className="muted">총 {query.data?.total ?? job.attemptCount}회 · 이번 주기 자동 재시도 예약 {job.autoRetryCount}회</span></div>
+    {query.isPending ? <p role="status">시도 이력을 불러오는 중…</p> : query.isError ? <div role="alert" className="error">{errorMessage(query.error)}<button onClick={() => query.refetch()}>다시 조회</button></div> : query.data && <>{!query.data.items.length && <p className="stage">Worker가 실행하기 전입니다. 대기 중 취소한 작업에는 실행 Attempt가 없습니다.</p>}<ol className="attempt-list">{query.data.items.map(attempt => <li key={attempt.attemptId}><div className="attempt-header"><strong>시도 #{attempt.attemptNumber} · {origins[attempt.origin]}</strong><span className={`badge ${attempt.status}`}>{states[attempt.status] ?? attempt.status}</span></div><code>{attempt.attemptId}</code><small>세대 {attempt.generation} · Worker {attempt.workerName}</small><small>{attempt.startedAt ? new Date(attempt.startedAt).toLocaleString('ko-KR') : '시작 시각 기록 없음'} → {attempt.finishedAt ? new Date(attempt.finishedAt).toLocaleString('ko-KR') : '종료 전 / 기록 없음'}</small>{attempt.errorCode && <p className="attempt-error">{attempt.errorCode} · {attempt.errorMessage}<br/>자동 재시도 대상: {attempt.retryable ? '예' : '아니요'}</p>}</li>)}</ol><div className="pagination"><button className="text-button" disabled={page <= 1} onClick={() => setPage(page-1)}>이전 시도</button><span>{page} / {Math.max(1,Math.ceil(query.data.total/10))}</span><button className="text-button" disabled={page*10 >= query.data.total} onClick={() => setPage(page+1)}>다음 시도</button></div></>}
+  </section>;
+}

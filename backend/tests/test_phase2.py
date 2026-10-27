@@ -202,7 +202,10 @@ def test_failed_partial_conversion_preserves_events_and_hides_result():
         on_page(0, 1, 1)
         raise OSError("disk full")
 
-    with patch("app.tasks.convert.ImagePDFConverter.convert", side_effect=fail):
+    with (
+        patch("app.tasks.convert.ImagePDFConverter.convert", side_effect=fail),
+        patch.object(settings, "max_auto_retries", 0),
+    ):
         convert_job.run(job["jobId"])
     detail = client.get(f"/api/v1/jobs/{job['jobId']}").json()
     assert detail["status"] == "FAILED" and detail["processedPages"] == 1

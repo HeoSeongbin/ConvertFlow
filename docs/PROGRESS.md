@@ -1,7 +1,78 @@
 # 개발 진행 현황
 
+기준일: 2026-10-27 (Asia/Seoul)
+현재 Phase: **Phase 3 — 실패 처리 및 재시도 완료**.
+다음 우선순위: **Phase 4 — 멱등성 및 Worker 장애 복구**. 이번 작업에서 Lease/강제 종료 복구는 구현하지 않았다.
+
+## 시작 상태
+AGENTS.md, PROJECT.md, PROGRESS.md, DECISIONS.md, README를 확인하고 실제 소스·Git 상태와 비교했다. 시작 시 main은 origin/main의 3e9e139와 같고 변경 사항이 없었다. Phase 2 백엔드 42개·프런트 4개 테스트와 Ruff가 통과했다. Docker Desktop을 기동해 실제 서비스를 검증했다.
+
+## 이번 완료 기능
+- 오류 분류: 입력/옵션/원본 누락·손상과 transient 저장소·리소스·soft time limit을 구분
+- 자동 재시도 최대 3회, 지수 backoff·equal jitter·상한, DB next_retry_at/Outbox 예약
+- 동일 Job의 수동 재처리, 원본 존재·해시 재검증, 새 Attempt와 오류·Worker·시각·기원 보존
+- INITIAL/AUTO/MANUAL/LEGACY Attempt 목록 및 페이지네이션, Event·Result의 Attempt 귀속
+- Retry Center: 실패/재시도 대기 목록, 재시도 가능·불가 표시, 상세 재처리 및 이력
+- 대기·예약 즉시 취소, 실행 중 취소 요청 및 페이지/게시 경계의 협조적 취소
+- 실행 세대가 포함된 메시지, active_attempt_id 검사, expectedGeneration CAS로 오래된 메시지·중복 조작 차단
+- 결과 경로에 Attempt UUID 사용, 취소/완료 게시의 Job row lock 직렬화
+- 0003 마이그레이션으로 기존 오류·결과·과거 이벤트를 보존하고 LEGACY Attempt 이관
+
+## 실제 검증 결과
+| 항목 | 결과 |
+|---|---|
+| Windows Python pytest | **64 passed**, 기존 httpx TestClient deprecation warning 1건 |
+| 최종 Linux API 이미지 pytest | **64 passed**, 같은 warning 1건 |
+| Ruff backend/scripts | 통과 |
+| 프런트 strict 타입 검사·build | 로컬 및 Docker Node 22에서 통과 |
+| Vitest | 2개 파일 **4 passed**, 취소·재시도 대기 polling 정책 포함 |
+| docker compose up --build --wait | 최종 exit 0 |
+| 서비스 | API/Worker/frontend/PostgreSQL/Redis healthy, Dispatcher 재기동 후 실행, migrate 정상 종료 |
+| PostgreSQL/Alembic | 0003, check에서 No new upgrade operations detected |
+| Phase 1·2 실제 smoke | 기존 단일 이미지·다중 TIFF·옵션·PDF 다운로드·오류/권한 검증 통과 |
+| Phase 3 전용 큐 실연동 | 실제 Redis/PostgreSQL + 별도 Celery solo 테스트 Worker에서 자동 재시도·상한·수동 재처리·이력·취소 전부 통과 |
+| 정상 Compose Worker + 브라우저 | 실제 권한 오류 후 복구·수동 재시도 성공, 실패/성공 Attempt 보존, 대기 중 취소 통과 |
+| 브라우저 다운로드 | 재처리 PDF의 정상 1페이지, 240×120pt, 원본 비율·이미지 확인 |
+| GitHub Actions | Phase 3 격리 통합 step 추가, 원격 실행은 미수행 |
+| 의존성 | 새 라이브러리·버전 변경 없음, 기존 lockfile 유지 |
+
+별도 세션 테스트는 SQLite와 실 PostgreSQL을 구분한다. 전용 큐 장애 주입은 제품 설정을 변경하지 않는 별도 테스트 프로세스에서 수행했다. 정상 Compose prefork Worker의 수동 재처리도 따로 확인했다. Worker kill·Lease 복구·다중 Worker 보장으로 확대해 표현하지 않는다.
+
+검증 Job: 자동 재시도 f2463a97-4473-4994-964a-d42fcb458c10, 자동 상한 후 수동 성공 e9f17386-595e-4817-a614-9a6bd1ed3a74(5 Attempt), 예약 취소 6e6dc6e5-676d-4088-8bb6-890505bf9953, 대기 취소 0f7fa2a7-62da-4576-93a8-4fc1db293215, 게시 직전 취소 dbcbd14a-0220-45f3-a959-8521bd5956f4. 브라우저 수동 성공 f7642835-334b-4a17-bf21-31c04f240862, 대기 취소 5f51304d-cb13-4263-ac66-8e81665e82d9. 토큰/cookie 원문은 기록하지 않는다.
+
+## 발견한 문제와 해결
+1. 실제 PostgreSQL/Redis에서 RETRY_WAIT→QUEUED 갱신을 커밋하기 전에 발행하면 Worker가 아직 RETRY_WAIT인 행을 건너뛰어 메시지가 소모될 수 있었다. Dispatcher를 QUEUED 준비 커밋과 Outbox publish의 두 트랜잭션으로 분리했다. 별도 DB 연결 가시성 테스트와 실제 즉시 소비 Worker로 재검증했다. 실패한 초기 검증 Job은 오류를 보존한 채 취소 서비스로 종료했다.
+2. 과거 메시지가 새 재시도를 잘못 Claim할 수 있었다. 메시지 세대·원자 Claim·active Attempt 소유권과 요청 expectedGeneration을 도입했다. 구형 단일 인자는 1세대로만 처리한다.
+3. SQLite의 naive 저장 시각과 요청 중 생성한 UTC-aware 시각으로 취소 응답의 처리 시간 계산이 실패했다. UTC 정규화로 수정하고 Windows/Linux 모두 통과했다.
+4. Celery 컨텍스트 밖의 직접 task 테스트에 current_task가 없을 수 있었다. 실제 Worker hostname을 우선하고 컨텍스트가 없을 때만 호스트명으로 대체하도록 수정했다.
+5. 원본이 없는 Job이 목록에서 재시도 가능으로 보이지 않도록 후보 파일을 배치 조회해 존재 여부를 반영했다. 원본 변경 여부는 POST retry에서 해시로 최종 검증한다.
+6. 자동 재시도 예약 수와 lifetime Attempt 수를 구분해 UI 문구를 명확히 했다. 실행하지 않은 취소 작업의 시작 시각은 실행 안 함으로 표시한다.
+
+## 변경 파일
+- 신규: backend/alembic/versions/0003_attempts.py, backend/app/services/errors.py·lifecycle.py, backend/tests/test_phase3.py
+- Backend 수정: app/api/routes.py, core/config.py, main.py, models/job.py, services/dispatcher.py·events.py·jobs.py, tasks/celery_app.py·convert.py
+- 회귀/이관 테스트: backend/tests/test_flow.py·test_phase2.py·test_migration.py
+- 신규 UI: frontend/src/features/jobs/AttemptHistory.tsx
+- UI 수정: frontend/src/app/App.tsx, services/api.ts·api.test.ts, style.css
+- 통합/CI: scripts/smoke_phase3.py, .github/workflows/ci.yml
+- 문서: README, docs/API·ARCHITECTURE·DECISIONS·PROGRESS·TEST-SCENARIOS
+- 화면: docs/screenshots/phase3-retry-center.png·phase3-attempts.png·phase3-cancelled.png
+
+## 남은 제약과 다음 작업
+Phase 4에서 Lease/Heartbeat·실행권한 재획득·fencing·복구 스케줄러, PostgreSQL 다중 Worker, Worker kill/재시작, Redis/DB 장애 및 결과 게시 직후 crash를 구현·검증한다. 현재 Worker가 죽으면 PROCESSING 또는 CANCEL_REQUESTED가 남을 수 있다. DB가 끊겨 실패 상태 자체를 저장하지 못하는 상황도 즉시 복구하지 않는다.
+
+DB와 파일 이동의 원자성, orphan 결과 정리, 자동 만료·스토리지 청소는 아직 없다. 새로운 API/Worker는 함께 배포해야 하며 실행 중 구버전 Worker 교체의 자동 복구는 지원하지 않는다. 취소는 인코딩을 강제 종료하지 않는다. 입력/옵션 오류나 원본 누락은 재업로드가 필요하다.
+
+로컬 workspace capability만 유지하며 계정 인증·할당량·API multipart 파싱 이전 스트림 제한은 후속 보강 사항이다. worker 로그 JSON 통일·TestClient deprecation, 저장소 내 Playwright E2E runner, 원격 CI 실행 및 성능 벤치마크는 미완료다. 테스트 입력은 생성한 이미지이며 실제 사용자 파일이나 자격 증명을 외부로 보내지 않았다.
+
+2026-10-27 후속 사용자 요청으로 Phase 3 변경을 기존 작성자 HeoSeongbin <heosb316@gmail.com>의 커밋으로 정리하고 origin/main에 게시하는 작업을 진행한다. 검증 결과는 위의 실제 실행 기록을 따른다. 현재 실행 차단 요인 없음.
+
+---
+
+# Phase 2 기록 (이전 실행)
+
 기준일: 2026-10-26 (Asia/Seoul)
-현재 Phase: **Phase 2 — 다중 파일 및 작업 관리 완료**.
+당시 완료 범위: Phase 2. 아래는 이전 실행 시점 기록이며 현재 상태는 위 Phase 3 보고를 따른다.
 다음 우선순위: **Phase 3 — 실패 처리 및 재시도**. 이번 작업에서 Phase 3 기능은 구현하지 않았다.
 
 ## Git 관리 시작
