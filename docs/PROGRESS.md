@@ -1,6 +1,71 @@
 # 개발 진행 현황
 
 기준일: 2026-10-28 (Asia/Seoul)
+현재 Phase: **Phase 6 — UI/UX 개선 완료**.
+다음 우선순위: **Phase 7 — 자동화 테스트 및 포트폴리오**. 이번에는 Phase 6 범위만 구현했다.
+
+## 시작 상태와 구현
+AGENTS → PROJECT → PROGRESS → DECISIONS → README를 읽고 소스·Git 상태와 비교했다. main은 Phase 5 로컬 커밋 825723a이며 origin/main tracking보다 1개 앞서고 작업 트리는 깨끗했다. 이전 사용자 요청대로 이 미푸시 상태를 유지한다. 기존 Windows 백엔드 80개 테스트를 먼저 통과했다.
+
+- JobDetail·UploadList·HistoryCards·EventTimeline·PDFPreview를 분리하고 고정 내비게이션/헤더·선택 Job 상세 이동/focus·skip link 제공
+- 빈 파일 검사·native 썸네일/Object URL 해제·TIFF placeholder·오류 파일 제거·키보드 순서 변경/안내
+- 파일 전송 100% 후 API 검증 대기와 실제 Worker 진행률을 구분. 파일/페이지 수·상태별 안내·오류 원문과 해결 행동 표시
+- PDF.js 6.4.299 로컬 asset으로 실제 PDF 페이지를 Canvas에 렌더링. 권한 있는 기존 download API 사용, 32 MiB 이하·한 페이지/약 2M pixels 제한
+- 페이지 전환·이전/다음 경계·닫기/재열기, 요청/render/page/document 정리. 모듈 오류는 Error Boundary로 콘솔과 다운로드를 유지
+- 최신 이벤트 30개+역방향 before 커서/더 보기·오류/재시도/취소 필터. 기존 after 오름차순 API는 보존하고 종료 상태의 최종 이벤트를 재조회
+- Light/Dark 초기 OS 선호·명시적 선택 저장, 모바일 화면 선택/작업 카드, 실행 전 취소를 실행 중/완료 전으로 표시하지 않음
+- binary PDF 요청에서도 구조화된 API 오류를 안전하게 읽어 안내, 새로고침/다운로드 fallback 제공
+
+## 실제 검증 결과
+| 항목 | 결과 |
+|---|---|
+| Windows 백엔드 | **82 passed**, 기존 TestClient deprecation warning 1건 |
+| 최종 Linux API 이미지 | **82 passed**, 같은 warning 1건 |
+| 프런트 | **15 passed**, strict TypeScript·production build 로컬 및 Docker 통과 |
+| Ruff·구문·diff | format/check·compileall·git diff --check 통과 |
+| 의존성 | PDF.js 6.4.299/package-lock 고정, npm audit 알려진 취약점 0건(검사 시점) |
+| Docker Compose | up --build --wait exit 0, 최종 API/Worker/frontend/PostgreSQL/Redis healthy, Dispatcher·Observer 실행, Worker 1개, migrate exit 0 |
+| 스키마 | 0005(head), Alembic check 신규 변경 없음. 이번 DB migration 없음 |
+| 기존 실연동 | Phase 1 단일 PDF·Phase 2 TIFF 순서/옵션/오류/권한 통과 |
+| 신규 커서 실연동 | 실제 32페이지 PDF·36개 이벤트, 최신 SUCCESS·역방향 무중복/무누락·기본 ascending 호환·미인가404 통과 |
+| 브라우저 미리보기 | 3페이지 A4 가로/10mm 실제 PDF의 빨강→초록→파랑, 페이지 전환·경계·닫기/재열기·테마 저장 통과 |
+| 브라우저 취소·재시도 | 대기 취소 0%/Attempt0, 새 Job storage 권한 오류→복구→같은 Job #1 실패/#2 성공·이력 보존 통과 |
+| 390px viewport | 같은 origin iframe에서 업로드·모바일 카드·상태 필터·상세 focus·PDF 페이지 전환·취소 실행 안 함 확인 |
+| 오류 격리 | 뷰어 module 일시 누락→안내/다운로드/콘솔 유지→asset 원복·새로고침 후 미리보기 정상 복귀 |
+| 원격 CI | Phase 6 smoke 정의 추가, 원격 Actions 실행 미수행 |
+
+검증 Job: 3페이지 브라우저 **939c7a73-1217-401d-92c2-998b77b3520d**, 대기 취소 **8b5156d8-15e7-40ab-bb07-17cdf728f347**, 수동 재처리 **958c9cf2-9b4a-4475-8b55-a39c333cd218**(실패 Attempt 21888a16…/성공 2a8e4dd0…), UI 36개 이벤트 더 보기 **5bc7e29e-4008-40d0-b094-d4638c065734**, 신규 script **32f37684-bb14-4c55-ac4d-bc79af9c5d7a**. 기존 smoke **5ea4e639-c34b-4229-804d-7c42fdecb631**, TIFF **18d29fa5-37f7-42dc-a4e2-d0b5610859f6**. 토큰/쿠키 원문은 보존하지 않았다.
+
+## 발견한 문제와 반영
+1. 이전 화면은 스크롤 아래에서 메뉴/선택 Job 상세 이동이 불편했다. 고정 내비게이션과 상세 scroll/focus, 모바일 카드로 개선했다.
+2. 기존 타임라인은 모든 이벤트를 매번 읽고 오래된 이벤트부터 표시했다. 최신 30개+커서로 변경하고 66개 회귀/36개 실제 이벤트에서 호환성과 무중복/무누락을 검증했다. UI에서도 30→36개 더 보기 및 수동 재시도/실패 필터 8→2개를 확인했다.
+3. 완료 직전 poll에서 과거 이벤트가 반환될 가능성을 검토했다. 종료 상태 query key를 분리해 실제 SUCCESS/FAILED/CANCELLED를 다시 조회한다.
+4. 모바일 카드의 null 시간은 처음에 취소도 완료 전으로 표시했다. 실행 전 CANCELLED는 실행 안 함, 실행 중·대기·기록 없음과 구분하고 회귀·실제 모바일 필터로 재검증했다.
+5. PDF binary 응답 모드의 JSON 오류가 일반 연결 오류로 사라질 수 있어 작은 ArrayBuffer 오류를 파싱해 원문 안내를 유지했다. 잘못된 body는 안전하게 fallback한다.
+6. PDF 모듈을 지연 로드하므로 네트워크/배포 중 모듈 누락이 콘솔 전체를 중단하지 않도록 경계를 두고 실제 asset fault로 확인했다. 설치 버전의 타입에 맞춰 PDF.js API를 적용하고 mjs MIME을 명시했다.
+
+## 변경 파일
+- 신규 UI: frontend/src/features/jobs/JobDetail.tsx·HistoryCards.tsx·EventTimeline.tsx·PDFPreview.tsx·PreviewBoundary.tsx·presentation.ts·presentation.test.ts, features/upload/UploadList.tsx, src/vite-env.d.ts
+- UI 수정: app/App.tsx, style.css, features/upload/files.ts·files.test.ts, services/api.ts·api.test.ts
+- 의존성/서빙: frontend/package.json·package-lock.json·nginx.conf
+- Backend: app/api/routes.py(events 조회만), app/main.py(0.6.0), tests/test_phase6.py
+- 실연동/CI: scripts/smoke_phase6.py, .github/workflows/ci.yml
+- 문서: README, docs/PROGRESS·DECISIONS·API·ARCHITECTURE·TEST-SCENARIOS, screenshots/phase6-*.png
+
+## 남은 제약과 다음 작업
+Phase 7에서 저장소 E2E runner·cross-browser/장애 시나리오 자동화·포트폴리오를 정리한다. 이번 브라우저 검증은 세션 기반이며 실제 모바일 기기/Safari/전문 접근성 감사나 자동 Playwright suite가 아니다. 32 MiB 초과 PDF는 다운로드로 확인하고, 미리보기는 시스템이 만든 이미지 PDF의 Canvas width-fit 페이지 표시이며 text 검색·주석·PDF 편집을 제공하지 않는다. PDF bytes를 모두 받으므로 완전 streaming은 아니다.
+
+기존 API/Worker 변환 책임·PostgreSQL 상태·Lease/세대/Attempt·재시도/오류 이력·Result 고유 확정은 변경하지 않았다. Worker 강제 종료 복구를 이번에 새로 구현/검증했다고 주장하지 않는다. 계정/운영자 인증, 자동 파일 만료·orphan 청소, Idempotency-Key, 장기 부하/누수, 로그 JSON 통일·TestClient warning은 여전히 남아 있다.
+
+검증용 모바일 HTML은 컨테이너에서 삭제했고 뷰어 asset과 새 테스트 디렉터리 권한을 원복했다. Worker 정상 실행과 최종 0005 스키마를 확인했다. 현재 실행 차단 요인 없음. 이번 변경의 커밋·푸시는 수행하지 않았다.
+
+2026-10-28 후속 사용자 요청으로 Phase 6 변경을 HeoSeongbin <heosb316@gmail.com> 작성자의 커밋으로 정리하고, 앞서 로컬에 보관한 Phase 5 커밋 825723a와 함께 origin/main에 게시한다. 검증 결과는 위 실제 실행 기록을 따른다.
+
+---
+
+# Phase 5 기록 (이전 실행)
+
+기준일: 2026-10-28 (Asia/Seoul)
 현재 Phase: **Phase 5 — 모니터링 및 성능 완료**.
 다음 우선순위: **Phase 6 — UI/UX 개선**. 이번 작업은 Phase 5 범위만 구현했다.
 

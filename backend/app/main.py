@@ -9,7 +9,7 @@ from app.core.db import engine
 from app.core.logging import configure_logging
 
 configure_logging()
-app = FastAPI(title="ConvertFlow", version="0.5.0")
+app = FastAPI(title="ConvertFlow", version="0.6.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.cors_origin],

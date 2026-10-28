@@ -31,6 +31,7 @@ jobs:
       - run: docker compose up -d --build --wait --wait-timeout 180
       - run: python scripts/smoke.py
       - run: python scripts/smoke_phase2.py
+      - run: python scripts/smoke_phase6.py
       - name: Phase 3 isolated retry and cancellation integration
         shell: bash
         run: |

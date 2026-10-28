@@ -121,3 +121,19 @@ opaque RGB 입력은 EXIF 정규화 후 RGB를 직접 PDF 인코딩한다. 불�
 
 ## ADR-035 실측 보고와 Worker 확장 — 채택
 실제 Compose에서 20파일×5프레임=100페이지/92.16M pixels 경계와 6 Job×8페이지 부하를 검증한다. Worker 1개와 2개 모두 concurrency=1, 컨테이너당 CPU 1/768MiB다. 작은 부하는 업로드 검증·DB·수집 오버헤드 영향이 커 이번 결과에서 Worker 2개가 더 빠르지 않았다. 작업 분산과 결과 일관성만 확인하고 무조건적인 선형 가속을 주장하지 않는다. 기본 Worker 1개를 유지한다. 원본 JSON·EXPLAIN 계획과 fixture·환경·표본 수를 docs/benchmarks에 보존한다. 벤치마크는 localhost 개발용이며 서비스 scale/중단을 포함하고 finally로 Worker 1개와 Observer를 복원한다. CI는 시나리오만 추가했으며 원격 실행은 이번 검증에 포함하지 않는다.
+
+## ADR-036 Phase 6 PDF 미리보기 — 채택
+서버에서 썸네일을 변환하지 않고 PDF.js 6.4.299를 고정 설치해 브라우저 Canvas로 실제 결과를 렌더링한다. 기존 권한·SUCCESS·크기·checksum 검증을 거치는 download API를 cookie/X-Job-Token과 함께 호출하며 외부 CDN·원격 PDF URL·URL 토큰을 사용하지 않는다. PDF 생성은 기존 Worker만 담당한다. 라이브러리/Worker는 Vite 로컬 asset이며 뷰어와 PDF 엔진은 열 때 지연 로드한다. Nginx에 mjs JavaScript MIME을 명시한다. 설치 버전의 TypeScript API와 [PDF.js 공식 예제](https://mozilla.github.io/pdf.js/examples/)를 기준으로 실제 렌더링을 확인했다.
+
+결과 크기가 확인되고 32 MiB 이하인 PDF만 미리보기를 제공하고 그 밖은 다운로드로 확인한다. 한 페이지씩 width-fit으로 표시하며 Canvas는 최대 약 2M pixels, DPR 최대 2다. 다운로드 요청 취소, render task 취소, page cleanup, document destroy를 수행한다. 모듈 로드 실패는 Error Boundary로 전체 콘솔에서 격리하고, PDF/페이지 오류는 재조회·다운로드 안내를 제공한다. XFA는 비활성화하고 링크/스크립트/주석 편집 뷰어를 제공하지 않는다. 전체 PDF bytes는 메모리에 보관하므로 완전 스트리밍이나 모든 브라우저/큰 문서 지원을 주장하지 않는다. PDF.js의 Node 요구사항은 22.13+ 또는 24+이며 npm audit는 검사 시점 알려진 취약점 0건이었다.
+
+## ADR-037 이벤트 탐색의 역방향 커서 — 채택
+기존 GET events의 기본 after/오름차순·nextAfter 계약을 유지하고 order=desc·before·nextBefore를 추가한다. (job_id,sequence) 고유 인덱스를 역방향으로 읽으며 권한 검사와 불변 이벤트는 그대로다. UI는 최신 30개부터 과거를 명시적으로 더 읽고, 불러온 이력에서만 오류·재시도·취소를 필터링한다. 모든 이벤트를 매 polling마다 끝까지 가져오던 반복을 제거한다. 종료 상태의 query key를 바꿔 완료 직전 poll이 오래된 결과였어도 최종 SUCCESS/FAILED/CANCELLED를 다시 조회한다. 66개 fixture와 실제 36개 이벤트로 오름차순 호환·역방향 무중복/무누락을 확인했다. 상태 변경·DB migration은 추가하지 않는다.
+
+## ADR-038 실제 진행률과 접근성·테마 — 채택
+업로드 전송량과 Worker 변환 진행률을 별도로 표시하고 전송 100% 후 API 검증 대기를 완료로 만들지 않는다. Job의 실제 페이지/파일 수, 최종 상태, 예약 시각·오류 원문·해결 안내를 표시한다. 취소는 마지막 진행률을 유지하고 실행하지 않은 취소를 실행 중이나 완료 전으로 표시하지 않는다. 업로드는 native thumbnail/Object URL을 해제하고 TIFF는 페이지 수를 추측하지 않고 placeholder를 쓴다. 빈 파일을 사전 거부하고 오류 파일 제거·키보드 순서 변경·screen reader 안내를 제공한다.
+
+고정 내비게이션/헤더, 선택한 Job의 상세로 이동·focus, 본문 skip link, 모바일 화면 선택·작업 카드, aria progress/canvas 설명을 적용한다. 테마는 최초 OS 선호를 참고하고 명시적 선택을 localStorage에 저장하되 storage 차단 시에도 현재 UI는 작동한다. 브라우저 viewport 390px는 임시 같은 origin iframe으로 검증했다. 실제 iOS/Android 기기·Safari·전문 접근성 감사나 자동 Playwright runner의 검증으로 확대하지 않는다.
+
+## ADR-039 Phase 6 검증 경계 — 채택
+실제 브라우저에서 선택/순서/옵션→변환→3페이지 색상 순서/전환·닫기/재열기·테마 저장·모바일 이력을 검증한다. 새 테스트 Job만 storage 권한 오류로 실패시키고 즉시 복구한 뒤 UI 수동 재시도로 이전 오류/Attempt 보존을 검사한다. Worker 일시 중지로 대기 취소를 확인하고 정상 복원한다. 이는 Worker 강제 종료 복구 검증을 새로 수행한 것이 아니며 기존 Lease/복구 구현은 변경하지 않는다. 임시 모바일 검증 HTML은 제품에 남기지 않고 스크린샷·재현 기록만 보존한다. 원격 CI는 정의만 갱신한다.

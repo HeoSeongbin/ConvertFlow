@@ -1,7 +1,7 @@
-# 검증 시나리오 — Phase 5
+# 검증 시나리오 — Phase 6
 
 ## 단위·컴포넌트 검증
-Phase 5 시작 전 기존 백엔드 70개 테스트를 재실행했다. 최종 Windows·Linux 백엔드는 각각 80 passed이며 httpx TestClient deprecation warning 1건이 남아 있다. 프런트 8개 테스트·strict 타입 검사·production build와 Ruff가 통과했다. 상세 결과는 PROGRESS.md를 따른다.
+Phase 6 시작 전 기존 백엔드 80개 테스트를 재실행했다. 최종 Windows·Linux 백엔드는 각각 82 passed이며 httpx TestClient deprecation warning 1건이 남아 있다. 프런트 15개 테스트·strict 타입 검사·production build와 Ruff가 통과했다. 상세 결과는 PROGRESS.md를 따른다.
 
 ```bash
 cd backend
@@ -148,3 +148,21 @@ python scripts/smoke_phase5_active.py
 실제 브라우저에서 Dashboard의 전체/최근 작업 수·평균 처리시간 반영과 Worker ONLINE/UNKNOWN·큐 수집 시각을 확인했다. 증거는 screenshots/phase5-dashboard.png·phase5-workers.png다. 저장소 Playwright runner는 아직 없으며 이번에는 세션 브라우저로 검증했다. 다음 Phase 6는 UI/UX 개선이다.
 
 API만 잠시 중지하고 정상 Observer/Worker를 유지한 상태에서도 브라우저가 이전 ONLINE/큐 캐시를 UNKNOWN으로 낮추고 연결 오류를 표시하는지 확인했다. API를 즉시 복원했다. 증거: screenshots/phase5-api-unavailable.png. 프런트 회귀는 실제 0/누락, API 오류 중 캐시 보존, 30초 만료 경계를 포함한다.
+
+## Phase 6 실제 UI·커서·미리보기
+```bash
+python scripts/smoke_phase6.py
+```
+실제 API→Redis→Worker로 32페이지 TIFF를 PDF로 만든다. 최신 30개+before 커서가 기본 ascending 전체 이벤트와 역순으로 일치하고 중복/누락이 없는지, SUCCESS가 최신인지, 외부 workspace 조회/다운로드 404인지 검사한다. SQLite 회귀는 66개 이벤트·cursor validation·Job 상태 불변도 확인한다. preview는 같은 download 권한 검사를 사용하며 별도 서버 변환을 추가하지 않는다.
+
+세션 브라우저 검증:
+1. 빈 PNG+TIFF+PNG 선택→빈 파일 경고/제출 비활성→오류 파일만 제거→PNG 위로 이동. 썸네일/TIFF placeholder·순서 안내 확인.
+2. A4 가로·10mm로 실제 3페이지 변환. PDF.js의 1/2/3 페이지 색상 순서·이전/다음 경계·닫기/재열기 확인.
+3. Dark→Light 변경 후 새로고침에서도 테마 유지. Job 선택은 유지하고 파일 선택은 초기화.
+4. 임시 같은 origin 390×844 iframe에서 화면 선택·이력 카드·필터·상세 focus 이동·PDF 페이지 전환 확인. 실행 전 취소는 0%·실행 안 함이며 완료 전/실행 중으로 표시하지 않음. 실제 기기/Safari 검증으로 확대하지 않음.
+5. Worker 잠시 중지→새 Job 대기 중 취소→CANCELLED·Attempt0·다운로드 없음. Worker 정상 복원.
+6. 새 테스트 Job의 processing 폴더만 권한 오류로 FAILED/STORAGE_ERROR 생성→권한 복구→UI 수동 재시도→같은 Job #1 실패/#2 성공·오류 원문/이벤트 보존.
+7. PDFPreview 모듈을 컨테이너에서 잠시 다른 이름으로 보관→뷰어 오류 안내·다운로드/콘솔 유지 확인→즉시 원래 경로로 복원→새로고침/미리보기 정상 복귀.
+8. 실제 32페이지 UI Job에서 최신 30개→더 보기→36개 이벤트. 오류 필터는 불러온 8개에서 FAILED+MANUAL_RETRY_REQUESTED 2개를 표시.
+
+페이지 Canvas 크기/DPR 자원 제한, 진행 상태별 안내, 빈 파일, 취소 시간, binary response 오류 메시지는 Vitest로 검증한다. 모바일 iframe과 임시 asset fault는 검증 환경에만 사용하고 제품에 파일/flag를 남기지 않는다. 스크린샷 phase6-*를 증거로 보존한다. 정식 Playwright runner·cross-browser matrix는 Phase 7 범위다.

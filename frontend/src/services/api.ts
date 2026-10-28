@@ -11,7 +11,12 @@ export interface JobEvent { eventId: string; attemptId?: string | null; sequence
 export const terminal = (status?: JobStatus) => status === 'SUCCESS' || status === 'FAILED' || status === 'CANCELLED';
 export const jobHeaders = (reference: JobReference) => reference.accessToken ? { 'X-Job-Token': reference.accessToken } : {};
 export function errorMessage(error: unknown): string {
-  if (axios.isAxiosError(error)) { const detail = error.response?.data?.detail; return typeof detail?.message === 'string' ? detail.message : Array.isArray(detail) ? '입력값과 파일 개수를 확인해 주세요.' : '서버에 연결할 수 없습니다. 서비스 상태를 확인해 주세요.'; }
+  if (axios.isAxiosError(error)) {
+    let data = error.response?.data;
+    if (data instanceof ArrayBuffer && data.byteLength <= 64 * 1024) { try { data = JSON.parse(new TextDecoder().decode(data)); } catch { data = undefined; } }
+    const detail = data?.detail;
+    return typeof detail?.message === 'string' ? detail.message : Array.isArray(detail) ? '입력값과 파일 개수를 확인해 주세요.' : '서버에 연결할 수 없습니다. 서비스 상태를 확인해 주세요.';
+  }
   return '요청을 처리하지 못했습니다.';
 }
 

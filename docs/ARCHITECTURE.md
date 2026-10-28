@@ -1,4 +1,4 @@
-# 시스템 아키텍처 — Phase 5
+# 시스템 아키텍처 — Phase 6
 ```mermaid
 flowchart LR
   Browser[React 업로드 / 작업 목록 / 상세] --> Nginx
@@ -75,3 +75,10 @@ Observer 컨테이너는 Celery Inspect stats/active와 Kombu Redis transport의
 Worker 인프라 메타데이터는 localhost 전체 값이며 활성 Job·최근 성과·오류는 workspace로 제한한다. 활성 Job은 현재 Attempt의 Worker, 메시지 세대, 미만료 Lease를 대조한다. 오래된 물리 Task가 남아도 새 Attempt를 그 Worker의 실행으로 표시하지 않는다. Observer 중단 시에도 변환과 API는 계속 동작하고 관측만 stale로 바뀐다.
 
 0005는 관측 테이블과 상태/Lease·workspace/완료·Attempt/완료 복합 인덱스를 추가한다. SQL 집계로 페이지 이력을 모두 Python 메모리에 읽지 않는다. RGB raster는 RGBA/white canvas 복사를 생략하고 기타 모드 합성은 유지한다. 파일 checksum은 bounded-buffer streaming으로 계산한다. PDF Writer의 인코딩 객체 보관은 남으며 전체 스트리밍/장기 누수 최적화를 주장하지 않는다. 실제 fixture·부하·계획·제한은 benchmarks/README.md를 따른다.
+
+## Phase 6 UI/UX
+JobDetail, EventTimeline, HistoryCards, UploadList, PDFPreview를 분리한다. Job/Attempt/오류·진행률의 기준은 계속 PostgreSQL이며 읽기 전용 events 역방향 커서만 추가했다. API의 변환/썸네일 생성이나 Worker 상태 전환을 추가하지 않았다. 스키마는 0005다.
+
+PDFPreview는 기존 download 권한 검사를 통과한 결과를 ArrayBuffer로 받아 로컬 PDF.js Web Worker와 Canvas로 표시한다. PDF 렌더링은 브라우저만 수행하며 원본 PDF는 바뀌지 않는다. 32 MiB 크기와 페이지 Canvas 자원을 제한하고 선택/닫기/해제 시 요청·render·document를 정리한다. PDF 엔진/Worker는 외부 CDN이 아니라 같은 Nginx의 Vite asset이다. 실패 시 콘솔을 유지하고 다운로드 안내를 제공한다.
+
+이벤트는 최신 30개 + before 커서로 더 읽는다. 기본 after 계약은 보존하며 상태 종료 때 최종 이벤트를 재조회한다. 모바일은 카드·화면 선택 메뉴를, 데스크톱은 테이블·고정 내비게이션을 사용한다. 테마 저장과 선택 Job focus는 클라이언트의 UI 상태이고 업무 상태를 대체하지 않는다.

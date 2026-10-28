@@ -1,5 +1,5 @@
 # ConvertFlow
-이미지 업로드 요청과 PDF 변환을 분리하는 비동기 문서 처리 플랫폼입니다. **Phase 5 — 모니터링 및 성능**을 구현했습니다. 실제 실행 결과는 [진행 현황](docs/PROGRESS.md)에 기록합니다.
+이미지 업로드 요청과 PDF 변환을 분리하는 비동기 문서 처리 플랫폼입니다. **Phase 6 — UI/UX 개선**까지 구현했습니다. 실제 실행 결과는 [진행 현황](docs/PROGRESS.md)에 기록합니다.
 
 React → FastAPI → PostgreSQL Outbox → Dispatcher → Redis → Linux Celery Worker → 공유 스토리지로 처리합니다. DB를 상태의 기준으로 사용하고 큐에는 Job UUID와 실행 세대만 전달합니다.
 
@@ -20,6 +20,10 @@ React → FastAPI → PostgreSQL Outbox → Dispatcher → Redis → Linux Celer
 - 별도 Observer의 실제 Worker 응답·활성 작업·큐 수집, 관측 시각과 UNKNOWN 표시
 - RGB 변환 복사 감소와 스트리밍 checksum, 복합 DB 인덱스 및 실제 부하 측정
 - 한국어 UI, Light/Dark 모드, 반응형 레이아웃
+- 인증된 실제 PDF의 페이지별 Canvas 미리보기, 페이지 전환·닫기·재열기
+- 업로드 썸네일·오류 파일 제거·빈 파일 검사, 실제 전송/변환 진행률 구분
+- 고정 내비게이션·선택 Job 상세 이동, 모바일 작업 카드·화면 선택, 테마 저장
+- 최신 이벤트 30개부터 더 보기, 오류·재시도·취소 필터와 원인별 안내
 
 ## 실행
 Docker Desktop Linux 엔진을 실행하고 루트에서:
@@ -33,6 +37,10 @@ docker compose ps
 파일을 선택하거나 끌어다 놓고, 위·아래 버튼으로 순서를 바꿉니다. PDF 옵션을 지정한 뒤 변환합니다. TIFF는 각 프레임을 하나의 페이지로 확장합니다. 성공 후 PDF 다운로드를 누르세요. 작업 이력에서 검색하거나 상태를 필터링하고 파일명을 눌러 상세·이벤트를 확인할 수 있습니다.
 
 제한은 파일 20개, 개별 20 MiB, 전체 100 MiB, 작업 전체 100페이지, 페이지당 25M 픽셀, 작업 전체 100M 픽셀입니다. 다중 프레임은 TIFF만 지원합니다. 원본 크기는 96 DPI 기준이며 자동 방향은 원본 크기에서는 원본 비율, A4/Letter에서는 기본 세로입니다. 원본이 작으면 큰 여백은 실패할 수 있으며 오류 원인을 이력에 보존합니다.
+
+성공 후 **결과 미리보기**를 열면 PDF.js가 같은 결과를 브라우저에서 렌더링합니다. 다음/이전 페이지로 이동하고 닫을 수 있습니다. 미리보기는 확인된 32 MiB 이하 결과에 제공하며 한 페이지 Canvas를 약 2M pixels로 제한합니다. 원본 PDF는 바뀌지 않고 큰 파일·지원되지 않는 브라우저는 다운로드를 이용합니다. PDF 엔진은 로컬 asset으로 제공하며 외부 서비스에 문서를 보내지 않습니다.
+
+전송 100%는 변환 완료가 아닙니다. API 검증과 Worker의 실제 파일/페이지 처리·결과 검증 상태를 별도로 확인하세요. 작업 이력에서 파일명을 누르면 상세로 이동하고, 최신 이벤트에서 **더 보기**로 과거 이력을 읽습니다. 테마는 브라우저에 저장되며 파일 선택은 새로고침 뒤 보존하지 않습니다.
 
 ## 재시도와 취소
 일시적 저장소 오류·리소스 부족·soft time limit은 최초 실행 이후 최대 3회 자동 재시도합니다. 기본 대기 범위는 1차 2.5~5초, 2차 5~10초, 3차 10~20초이며 최대 지연 설정은 300초입니다. DB의 예약 시각이 지나면 Dispatcher가 QUEUED 전환을 먼저 커밋하고 실행 세대를 포함한 메시지를 발행합니다. 브로커에 미래 ETA 메시지를 장기 보관하지 않습니다.
@@ -70,7 +78,7 @@ docker compose up -d --scale worker=1 worker
 같은 Linux 새 프로세스에서 8페이지 2048² RGB TIFF를 각 3회 비교했을 때 변환 peak 메모리 중앙값은 **163.6→115.4 MiB**, 64 MiB 파일 해시는 **110.2→46.3 MiB**였습니다. PDF 페이지·이미지 해시와 파일 checksum이 일치했습니다. 합성 데이터의 한 환경 측정이며 일반적인 성능 보장은 아닙니다. [측정 방법과 원본 결과](docs/benchmarks/README.md)를 확인하세요.
 
 ## 검증
-Python 3.12, Node 22 이상을 권장합니다.
+Python 3.12, Node 22.13 이상 또는 24 이상을 사용합니다.
 ```bash
 python -m venv .venv
 # venv 활성화 후
@@ -91,21 +99,21 @@ python scripts/smoke_phase2.py
 docker compose exec -T api alembic check
 docker compose logs -f api worker dispatcher
 ```
-백엔드 **Windows·Linux 각각 80개 테스트**, 프런트 **8개 테스트·타입 검사·빌드**가 통과했습니다. 실제 Redis→Linux Worker로 기존 단일 이미지·TIFF·출력 옵션·권한을 재검증했습니다. Phase 5에서는 20파일·100페이지 PDF, Worker 1/2개 부하·작업 분산, 실제 큐 양수/0, Observer 중단 후 UNKNOWN 전환과 복귀, 활성 Task의 Job ID·Heartbeat 및 작업공간 격리를 검증했습니다. 브라우저에서 새 변환 완료와 Dashboard 통계 반영·Worker 화면도 확인했습니다. 원격 GitHub Actions는 정의만 갱신했고 실행하지 않았습니다. 자세한 결과는 [진행 현황](docs/PROGRESS.md)을 확인하세요.
+백엔드 **Windows·Linux 각각 82개 테스트**, 프런트 **15개 테스트·타입 검사·빌드**가 통과했습니다. 실제 32페이지 PDF·36개 이벤트의 역방향 커서/기존 API·권한을 검증했습니다. 브라우저에서는 오류 파일 제거·순서 변경→A4 가로 3페이지 변환→실제 PDF 페이지 렌더링/전환·테마 저장, 대기 취소·저장소 오류 후 수동 재시도와 Attempt 보존, 모듈 로드 실패의 콘솔 격리·복귀를 확인했습니다. 390px iframe에서 모바일 카드·필터·상세 이동·미리보기도 확인했으며 실제 모바일 기기/Safari 테스트는 아닙니다. 이전 Phase 5의 부하·메모리 결과도 보존합니다. 원격 GitHub Actions는 정의만 갱신했고 실행하지 않았습니다. 자세한 결과는 [진행 현황](docs/PROGRESS.md)을 확인하세요.
 
 실제 Phase 3 장애 주입 테스트는 일반 Dispatcher를 잠시 중지한 전용 테스트 프로세스에서만 실행합니다. 운영 코드에 오류 주입 플래그는 없습니다. 실행·복원 방법은 [검증 절차](docs/TEST-SCENARIOS.md)를 확인하세요.
 
 ## 설계와 남은 범위
 조건부 DB Claim과 Job별 고유 Result, 상태 갱신과 동일 트랜잭션의 완료 이벤트로 중복 반영을 방지합니다. 임시 PDF를 전체 검증한 뒤 동일 볼륨에서 원자 이동하며 SUCCESS 결과만 다운로드합니다. DB와 파일시스템 사이 원자성을 보장하지는 않습니다.
 
-**다음 Phase 6:** 업로드·진행률·이벤트·결과 미리보기 등 UI/UX 개선입니다. 자동 파일 만료·청소, 사용자 계정 인증, 요청 Idempotency-Key, 장기 soak·누수 및 실사용 파일 성능 평가는 아직 없습니다. 파일을 새로 업로드하면 별도 Job입니다. 장애 시 즉시 복구를 보장하지 않으며 DB·스토리지가 사용 가능하고 Dispatcher가 돌아야 합니다.
+**다음 Phase 7:** 자동화 테스트·E2E·장애 시나리오와 포트폴리오 정리입니다. 자동 파일 만료·청소, 사용자 계정 인증, 요청 Idempotency-Key, 장기 soak·누수 및 실사용 파일 성능 평가는 아직 없습니다. 파일을 새로 업로드하면 별도 Job입니다. 장애 시 즉시 복구를 보장하지 않으며 DB·스토리지가 사용 가능하고 Dispatcher가 돌아야 합니다.
 
 ```bash
 docker compose down  # 종료, 볼륨 데이터 보존
 ```
-스택: React 19.1 / TypeScript 5.8 / Vite 6.4 / TanStack Query / Axios / Lucide / Vitest, Python 3.12 / FastAPI / SQLAlchemy / Alembic / psycopg / Celery / Redis / Pillow / pypdf, PostgreSQL 16.9 / Redis 7.4.4 / Nginx. 의존성은 기존 lockfile을 유지했으며 새 라이브러리는 추가하지 않았습니다. UI는 현재 단일 콘솔 내 업로드·이력 전환을 사용합니다.
+스택: React 19.1 / TypeScript 5.8 / Vite 6.4 / TanStack Query / Axios / PDF.js 6.4.299 / Lucide / Vitest, Python 3.12 / FastAPI / SQLAlchemy / Alembic / psycopg / Celery / Redis / Pillow / pypdf, PostgreSQL 16.9 / Redis 7.4.4 / Nginx. PDF.js만 추가하고 package-lock에 고정했으며 npm audit는 검사 시점 알려진 취약점 0건이었습니다. UI는 단일 콘솔 내 화면 전환을 사용합니다.
 
-![Phase 5 Dashboard](docs/screenshots/phase5-dashboard.png)
-[Worker Monitoring 화면](docs/screenshots/phase5-workers.png) · [Phase 3 Attempt 이력](docs/screenshots/phase3-attempts.png)
+![Phase 6 실제 PDF 미리보기](docs/screenshots/phase6-preview.png)
+[모바일 미리보기](docs/screenshots/phase6-mobile-preview.png) · [모바일 이력](docs/screenshots/phase6-mobile-history.png) · [이전 Dashboard](docs/screenshots/phase5-dashboard.png)
 
 [전체 요구사항](PROJECT.md) · [진행 현황](docs/PROGRESS.md) · [아키텍처](docs/ARCHITECTURE.md) · [ADR](docs/DECISIONS.md) · [API](docs/API.md) · [검증 절차](docs/TEST-SCENARIOS.md)

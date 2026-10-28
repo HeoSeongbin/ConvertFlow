@@ -244,14 +244,18 @@ def get_events(
     x_job_token: str | None = Header(default=None),
     after: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
+    order: Literal["asc", "desc"] = "asc",
+    before: int | None = Query(None, ge=1),
 ):
     with Session() as db:
         authorized(db, job_id, x_job_token, request.cookies.get(WORKSPACE_COOKIE))
+        query = select(Event).where(Event.job_id == str(job_id), Event.sequence > after)
+        if before is not None:
+            query = query.where(Event.sequence < before)
         events = db.scalars(
-            select(Event)
-            .where(Event.job_id == str(job_id), Event.sequence > after)
-            .order_by(Event.sequence)
-            .limit(limit + 1)
+            query.order_by(
+                Event.sequence.desc() if order == "desc" else Event.sequence
+            ).limit(limit + 1)
         ).all()
         visible = events[:limit]
         return {
@@ -267,7 +271,10 @@ def get_events(
                 }
                 for e in visible
             ],
-            "nextAfter": visible[-1].sequence if visible else after,
+            "nextAfter": visible[-1].sequence if visible and order == "asc" else after,
+            "nextBefore": visible[-1].sequence
+            if visible and order == "desc"
+            else before,
             "hasMore": len(events) > limit,
         }
 

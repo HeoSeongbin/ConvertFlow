@@ -1,4 +1,4 @@
-# Phase 5 API 계약
+# Phase 6 API 계약
 기본 경로 `/api/v1`, OpenAPI `/openapi.json`, Swagger `/docs`. 기존 단일 파일 multipart와 X-Job-Token을 유지한다.
 
 ## 업로드
@@ -39,6 +39,10 @@ pageSize: original/A4/Letter, orientation: auto/portrait/landscape, marginMm: 0~
 Job 요약: jobId,status,stage,progress,filename,createdAt,startedAt,completedAt,durationSeconds,totalFiles,processedFiles,totalPages,processedPages,errorCode,errorMessage,downloadAvailable.
 상세 추가: options, files(파일명·크기·MIME·페이지 수·순서·checksum), result(크기·페이지 수·checksum 또는 null).
 이벤트: eventId,attemptId(이전 기록/실행 전 이벤트는 null),sequence,type,message,details,createdAt. after는 마지막 확인 sequence, limit 1~100. 시간은 UTC ISO8601이며 UI가 현지 시간으로 표시한다.
+
+Phase 6은 `order=desc&limit=30`으로 최신 이벤트부터 읽을 수 있다. 응답 `nextBefore`를 다음 요청의 `before`(양의 sequence)로 보내면 그보다 오래된 이벤트를 읽는다. `hasMore=false`면 종료한다. 기본 `order=asc`, `after=0`, `nextAfter` 계약은 그대로이며 기존 클라이언트를 변경할 필요가 없다. UI 필터는 불러온 페이지 안의 FAILED/RECOVERY_REQUIRED/RETRY_SCHEDULED/MANUAL_RETRY_REQUESTED/CANCELLED/CANCEL_REQUESTED만 고르며 서버 전체 검색 결과처럼 표시하지 않는다.
+
+PDF 미리보기 전용 변환 API는 없다. 브라우저가 기존 download 엔드포인트로 권한·파일 검증을 거친 동일 PDF를 가져와 PDF.js Canvas로 표시한다. 32 MiB 이하의 확인된 결과만 미리보기를 제공하고 큰 결과는 다운로드를 유지한다. query 토큰이나 공개 결과 URL을 추가하지 않는다.
 
 입력 오류는 422 `{"detail":{"code":"...","message":"..."}}`. Pydantic 요청 구조·개수·query 검증 오류는 기본 detail 배열이다. FILE_TOO_LARGE, FILE_LIMIT_EXCEEDED, PAGE_LIMIT_EXCEEDED, PIXEL_LIMIT_EXCEEDED, INVALID_FILE, DECODE_FAILED, UNSUPPORTED_FORMAT, INVALID_OPTIONS 등을 구분한다. Worker 오류는 Job과 FAILED 이벤트에 코드·안전한 메시지·예외 종류를 저장한다. 상세 traceback은 서버 로그에만 기록한다.
 

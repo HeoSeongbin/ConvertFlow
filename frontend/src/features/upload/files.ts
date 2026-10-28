@@ -1,5 +1,6 @@
 export interface UploadEntry { id: string; file: File; error?: string }
 export function fileError(file: Pick<File, 'name' | 'size'>): string | undefined {
+  if (file.size === 0) return '빈 파일입니다. 정상 이미지를 다시 선택하세요.';
   if (file.size > 20 * 1024 * 1024) return '파일은 최대 20 MiB입니다.';
   if (!/\.(png|jpe?g|bmp|webp|tiff?)$/i.test(file.name)) return '지원하지 않는 이미지 형식입니다.';
 }
