@@ -1,0 +1,22 @@
+{
+  "jobId": "8b2dec4b-bebb-48a2-9699-df56ac160406",
+  "worker": {
+    "name": "worker@bc380b7c6ebe",
+    "status": "ONLINE",
+    "lastSeenAt": "2026-10-28T06:13:04.889200+00:00",
+    "lastProbeAt": "2026-10-28T06:13:04.889200+00:00",
+    "concurrency": 1,
+    "activeCount": 1,
+    "jobs": [
+      {
+        "jobId": "8b2dec4b-bebb-48a2-9699-df56ac160406",
+        "status": "PROCESSING",
+        "heartbeatAt": "2026-10-28T06:13:02.791130+00:00",
+        "leaseExpiresAt": "2026-10-28T06:13:32.791130+00:00"
+      }
+    ],
+    "recentSuccess": 0,
+    "recentFailedAttempts": 0
+  },
+  "releasedNormally": true
+}

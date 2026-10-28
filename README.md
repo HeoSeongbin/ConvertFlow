@@ -1,5 +1,5 @@
 # ConvertFlow
-이미지 업로드 요청과 PDF 변환을 분리하는 비동기 문서 처리 플랫폼입니다. **Phase 4 — 멱등성 및 Worker 장애 복구**를 구현했습니다. 실제 실행 결과는 [진행 현황](docs/PROGRESS.md)에 기록합니다.
+이미지 업로드 요청과 PDF 변환을 분리하는 비동기 문서 처리 플랫폼입니다. **Phase 5 — 모니터링 및 성능**을 구현했습니다. 실제 실행 결과는 [진행 현황](docs/PROGRESS.md)에 기록합니다.
 
 React → FastAPI → PostgreSQL Outbox → Dispatcher → Redis → Linux Celery Worker → 공유 스토리지로 처리합니다. DB를 상태의 기준으로 사용하고 큐에는 Job UUID와 실행 세대만 전달합니다.
 
@@ -16,6 +16,9 @@ React → FastAPI → PostgreSQL Outbox → Dispatcher → Redis → Linux Celer
 - 대기/재시도 대기 즉시 취소, 실행 중 협조적 취소와 결과 게시 차단
 - DB 시각 기반 Lease·독립 Heartbeat, 만료 실행 회수·새 Attempt 복구·오래된 Worker fencing
 - 미획득 메시지 재발행, Worker 중단·재시작 및 DB/Redis 복귀 후 작업 재개
+- Dashboard의 작업 상태 분포, 최근 처리시간·성공 처리량·실패 Attempt 코드 통계
+- 별도 Observer의 실제 Worker 응답·활성 작업·큐 수집, 관측 시각과 UNKNOWN 표시
+- RGB 변환 복사 감소와 스트리밍 checksum, 복합 DB 인덱스 및 실제 부하 측정
 - 한국어 UI, Light/Dark 모드, 반응형 레이아웃
 
 ## 실행
@@ -48,6 +51,24 @@ docker compose ps
 
 0002 마이그레이션은 기존 작업·오류·결과를 보존하고 파일·결과 테이블을 채웁니다. 소유자를 알 수 없는 Phase 1 작업은 임의의 브라우저 목록에 노출하지 않습니다. 기존 접근 토큰으로 계속 조회·다운로드할 수 있습니다. 과거 이벤트를 추측해 만들지 않고 `LEGACY_IMPORTED` 스냅샷만 추가합니다. 다중 파일/이력 유실 방지를 위해 0002 downgrade는 의도적으로 차단합니다. 0003은 이전 실행을 LEGACY Attempt로 보존하며 알 수 없는 Worker는 UNKNOWN, 없는 시각은 null로 남깁니다. Attempt 이력을 잃는 0003 downgrade도 차단합니다.
 
+0004는 Lease, 0005는 관측 테이블·조회 인덱스를 추가하며 이전 Job/Attempt/결과·오류를 유지합니다. 현재 스키마는 0005입니다.
+
+## Dashboard와 Worker Monitoring
+왼쪽 메뉴의 Dashboard에서 이 브라우저 작업공간의 상태 분포와 최근 60분 통계를 확인합니다. 평균 실행 시간은 마지막 성공 실행의 시작→완료, 접수→성공 평균은 대기·재시도까지 포함합니다. 시간 표본이 없으면 `—`이며, 과거 실패는 재시도 성공 후에도 Attempt 오류 통계에 남습니다.
+
+Observer가 Celery Inspect와 기본 celery 큐를 수집해 PostgreSQL에 저장하고 API는 캐시를 조회합니다. 수집 주기는 기본 10초 대기에 네트워크 요청 시간이 더해지며 화면은 5초마다 조회합니다. 30초 이상 오래되거나 응답을 확인하지 못하면 `UNKNOWN`입니다. 이는 Worker 종료 판정이 아닙니다. 마지막 응답·수집 시각을 표시하며 모르는 값을 0으로 만들지 않습니다.
+
+Worker 이름·슬롯·활성 Task 수·큐 ready 메시지는 **전체 인프라** 값입니다. 활성 Job ID와 최근 성공/실패는 이 작업공간만 표시합니다. 큐 수치는 예약/실행/Job 수와 다릅니다. 운영자 인증이 없는 localhost 개발용 모니터링이며 공개 운영 권한 체계는 아직 없습니다.
+
+Worker 확장과 복원:
+```bash
+docker compose up -d --scale worker=2 worker
+docker compose up -d --scale worker=1 worker
+```
+컨테이너당 concurrency 1·CPU 1·768 MiB입니다. 실제 6 Job 부하에서 두 Worker가 각각 3개를 처리했지만, 작은 입력의 전체 시간은 1개 2.37초/2개 3.37초여서 확장이 항상 빠르지는 않았습니다. 기본값은 1개를 유지합니다.
+
+같은 Linux 새 프로세스에서 8페이지 2048² RGB TIFF를 각 3회 비교했을 때 변환 peak 메모리 중앙값은 **163.6→115.4 MiB**, 64 MiB 파일 해시는 **110.2→46.3 MiB**였습니다. PDF 페이지·이미지 해시와 파일 checksum이 일치했습니다. 합성 데이터의 한 환경 측정이며 일반적인 성능 보장은 아닙니다. [측정 방법과 원본 결과](docs/benchmarks/README.md)를 확인하세요.
+
 ## 검증
 Python 3.12, Node 22 이상을 권장합니다.
 ```bash
@@ -70,20 +91,21 @@ python scripts/smoke_phase2.py
 docker compose exec -T api alembic check
 docker compose logs -f api worker dispatcher
 ```
-백엔드 **Windows·Linux 각각 70개 테스트**, 프런트 **4개 테스트·타입 검사·빌드**가 통과했습니다. 실제 Redis→Linux Worker로 단일 이미지 및 3페이지 TIFF 병합, 출력 크기·순서, 실패 이벤트, 작업공간 격리를 재검증했습니다. 기존 Phase 3의 자동/수동 재시도·횟수 제한·게시 직전 취소도 통과했습니다. Phase 4는 실제 Celery SIGKILL·SIGSTOP/SIGCONT·두 Worker 중복 메시지·동시 복구 스케줄러, 정상 Compose prefork Worker 컨테이너 강제 종료, Redis 중단·PostgreSQL 35초 중단 후 복구까지 확인했습니다. 브라우저 스크린샷은 Phase 3 당시 검증 기록이며 이번 UI 레이아웃 변경은 없습니다. 원격 GitHub Actions는 정의만 갱신했고 실행하지 않았습니다. 자세한 결과는 [진행 현황](docs/PROGRESS.md)을 확인하세요.
+백엔드 **Windows·Linux 각각 80개 테스트**, 프런트 **8개 테스트·타입 검사·빌드**가 통과했습니다. 실제 Redis→Linux Worker로 기존 단일 이미지·TIFF·출력 옵션·권한을 재검증했습니다. Phase 5에서는 20파일·100페이지 PDF, Worker 1/2개 부하·작업 분산, 실제 큐 양수/0, Observer 중단 후 UNKNOWN 전환과 복귀, 활성 Task의 Job ID·Heartbeat 및 작업공간 격리를 검증했습니다. 브라우저에서 새 변환 완료와 Dashboard 통계 반영·Worker 화면도 확인했습니다. 원격 GitHub Actions는 정의만 갱신했고 실행하지 않았습니다. 자세한 결과는 [진행 현황](docs/PROGRESS.md)을 확인하세요.
 
 실제 Phase 3 장애 주입 테스트는 일반 Dispatcher를 잠시 중지한 전용 테스트 프로세스에서만 실행합니다. 운영 코드에 오류 주입 플래그는 없습니다. 실행·복원 방법은 [검증 절차](docs/TEST-SCENARIOS.md)를 확인하세요.
 
 ## 설계와 남은 범위
 조건부 DB Claim과 Job별 고유 Result, 상태 갱신과 동일 트랜잭션의 완료 이벤트로 중복 반영을 방지합니다. 임시 PDF를 전체 검증한 뒤 동일 볼륨에서 원자 이동하며 SUCCESS 결과만 다운로드합니다. DB와 파일시스템 사이 원자성을 보장하지는 않습니다.
 
-**다음 Phase 5:** Worker·큐·작업 상태 모니터링 및 성능 측정입니다. 자동 파일 만료·청소, 사용자 계정 인증, 요청 Idempotency-Key, 성능 벤치마크는 아직 없습니다. 파일을 새로 업로드하면 별도 Job입니다. 장애 시 즉시 복구를 보장하지 않으며 DB·스토리지가 사용 가능하고 Dispatcher가 돌아야 합니다.
+**다음 Phase 6:** 업로드·진행률·이벤트·결과 미리보기 등 UI/UX 개선입니다. 자동 파일 만료·청소, 사용자 계정 인증, 요청 Idempotency-Key, 장기 soak·누수 및 실사용 파일 성능 평가는 아직 없습니다. 파일을 새로 업로드하면 별도 Job입니다. 장애 시 즉시 복구를 보장하지 않으며 DB·스토리지가 사용 가능하고 Dispatcher가 돌아야 합니다.
 
 ```bash
 docker compose down  # 종료, 볼륨 데이터 보존
 ```
 스택: React 19.1 / TypeScript 5.8 / Vite 6.4 / TanStack Query / Axios / Lucide / Vitest, Python 3.12 / FastAPI / SQLAlchemy / Alembic / psycopg / Celery / Redis / Pillow / pypdf, PostgreSQL 16.9 / Redis 7.4.4 / Nginx. 의존성은 기존 lockfile을 유지했으며 새 라이브러리는 추가하지 않았습니다. UI는 현재 단일 콘솔 내 업로드·이력 전환을 사용합니다.
 
-![Phase 3 실패 및 성공 Attempt 보존](docs/screenshots/phase3-attempts.png)
+![Phase 5 Dashboard](docs/screenshots/phase5-dashboard.png)
+[Worker Monitoring 화면](docs/screenshots/phase5-workers.png) · [Phase 3 Attempt 이력](docs/screenshots/phase3-attempts.png)
 
 [전체 요구사항](PROJECT.md) · [진행 현황](docs/PROGRESS.md) · [아키텍처](docs/ARCHITECTURE.md) · [ADR](docs/DECISIONS.md) · [API](docs/API.md) · [검증 절차](docs/TEST-SCENARIOS.md)

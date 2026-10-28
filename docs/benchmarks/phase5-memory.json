@@ -1,0 +1,164 @@
+{
+  "platform": "Linux Python fresh process",
+  "fixture": {
+    "format": "RGB TIFF",
+    "pages": 8,
+    "width": 2048,
+    "height": 2048,
+    "inputBytes": 2480992
+  },
+  "hashFixtureBytes": 67108864,
+  "samples": {
+    "convert-baseline": {
+      "medianSeconds": 0.2721419920003427,
+      "medianPeakRssBytes": 171581440,
+      "runs": [
+        {
+          "elapsedSeconds": 0.2721419920003427,
+          "peakProcessRssBytes": 171581440,
+          "digest": null,
+          "pages": 8,
+          "imageHashes": [
+            "247ae526644ed168a8ea7cb677fbe5ebf80f6764476682f78c6770f01a1b9f02",
+            "7f38d68bf175abe1f703259728b6f573d4c34da362380d6452f1ab98555d782c",
+            "8a99d3ecc2487879538c722c08de81dd22caf91ba3479562683c4bd561c26a03",
+            "39e2cd93eb07448d65d4bb0009fdca85afb5566fffa5c02bbc3e9d8da8f3690e",
+            "c2eb3d4706e56d9ca264bff0e527987f89255a46b78b265f7c0389091425664e",
+            "4889da35760aeb299decc681bedca9e5789b6c4fa6e7f814bc59c5fea0b9bfa9",
+            "7e18c5c0a45d8b82f146b1b976d13b12c56d16c53d837b599f107c709ea1b28b",
+            "2c237c4435edb2ee7421b5bcd3f359a0f1c7df46b9dc3b47ea6786ddf5b6f3e4"
+          ]
+        },
+        {
+          "elapsedSeconds": 0.2368959690002157,
+          "peakProcessRssBytes": 171335680,
+          "digest": null,
+          "pages": 8,
+          "imageHashes": [
+            "247ae526644ed168a8ea7cb677fbe5ebf80f6764476682f78c6770f01a1b9f02",
+            "7f38d68bf175abe1f703259728b6f573d4c34da362380d6452f1ab98555d782c",
+            "8a99d3ecc2487879538c722c08de81dd22caf91ba3479562683c4bd561c26a03",
+            "39e2cd93eb07448d65d4bb0009fdca85afb5566fffa5c02bbc3e9d8da8f3690e",
+            "c2eb3d4706e56d9ca264bff0e527987f89255a46b78b265f7c0389091425664e",
+            "4889da35760aeb299decc681bedca9e5789b6c4fa6e7f814bc59c5fea0b9bfa9",
+            "7e18c5c0a45d8b82f146b1b976d13b12c56d16c53d837b599f107c709ea1b28b",
+            "2c237c4435edb2ee7421b5bcd3f359a0f1c7df46b9dc3b47ea6786ddf5b6f3e4"
+          ]
+        },
+        {
+          "elapsedSeconds": 0.2740112980000049,
+          "peakProcessRssBytes": 171786240,
+          "digest": null,
+          "pages": 8,
+          "imageHashes": [
+            "247ae526644ed168a8ea7cb677fbe5ebf80f6764476682f78c6770f01a1b9f02",
+            "7f38d68bf175abe1f703259728b6f573d4c34da362380d6452f1ab98555d782c",
+            "8a99d3ecc2487879538c722c08de81dd22caf91ba3479562683c4bd561c26a03",
+            "39e2cd93eb07448d65d4bb0009fdca85afb5566fffa5c02bbc3e9d8da8f3690e",
+            "c2eb3d4706e56d9ca264bff0e527987f89255a46b78b265f7c0389091425664e",
+            "4889da35760aeb299decc681bedca9e5789b6c4fa6e7f814bc59c5fea0b9bfa9",
+            "7e18c5c0a45d8b82f146b1b976d13b12c56d16c53d837b599f107c709ea1b28b",
+            "2c237c4435edb2ee7421b5bcd3f359a0f1c7df46b9dc3b47ea6786ddf5b6f3e4"
+          ]
+        }
+      ]
+    },
+    "convert-current": {
+      "medianSeconds": 0.1427509889999783,
+      "medianPeakRssBytes": 121012224,
+      "runs": [
+        {
+          "elapsedSeconds": 0.1440685399998074,
+          "peakProcessRssBytes": 121110528,
+          "digest": null,
+          "pages": 8,
+          "imageHashes": [
+            "247ae526644ed168a8ea7cb677fbe5ebf80f6764476682f78c6770f01a1b9f02",
+            "7f38d68bf175abe1f703259728b6f573d4c34da362380d6452f1ab98555d782c",
+            "8a99d3ecc2487879538c722c08de81dd22caf91ba3479562683c4bd561c26a03",
+            "39e2cd93eb07448d65d4bb0009fdca85afb5566fffa5c02bbc3e9d8da8f3690e",
+            "c2eb3d4706e56d9ca264bff0e527987f89255a46b78b265f7c0389091425664e",
+            "4889da35760aeb299decc681bedca9e5789b6c4fa6e7f814bc59c5fea0b9bfa9",
+            "7e18c5c0a45d8b82f146b1b976d13b12c56d16c53d837b599f107c709ea1b28b",
+            "2c237c4435edb2ee7421b5bcd3f359a0f1c7df46b9dc3b47ea6786ddf5b6f3e4"
+          ]
+        },
+        {
+          "elapsedSeconds": 0.1427509889999783,
+          "peakProcessRssBytes": 121012224,
+          "digest": null,
+          "pages": 8,
+          "imageHashes": [
+            "247ae526644ed168a8ea7cb677fbe5ebf80f6764476682f78c6770f01a1b9f02",
+            "7f38d68bf175abe1f703259728b6f573d4c34da362380d6452f1ab98555d782c",
+            "8a99d3ecc2487879538c722c08de81dd22caf91ba3479562683c4bd561c26a03",
+            "39e2cd93eb07448d65d4bb0009fdca85afb5566fffa5c02bbc3e9d8da8f3690e",
+            "c2eb3d4706e56d9ca264bff0e527987f89255a46b78b265f7c0389091425664e",
+            "4889da35760aeb299decc681bedca9e5789b6c4fa6e7f814bc59c5fea0b9bfa9",
+            "7e18c5c0a45d8b82f146b1b976d13b12c56d16c53d837b599f107c709ea1b28b",
+            "2c237c4435edb2ee7421b5bcd3f359a0f1c7df46b9dc3b47ea6786ddf5b6f3e4"
+          ]
+        },
+        {
+          "elapsedSeconds": 0.14205872200000158,
+          "peakProcessRssBytes": 120897536,
+          "digest": null,
+          "pages": 8,
+          "imageHashes": [
+            "247ae526644ed168a8ea7cb677fbe5ebf80f6764476682f78c6770f01a1b9f02",
+            "7f38d68bf175abe1f703259728b6f573d4c34da362380d6452f1ab98555d782c",
+            "8a99d3ecc2487879538c722c08de81dd22caf91ba3479562683c4bd561c26a03",
+            "39e2cd93eb07448d65d4bb0009fdca85afb5566fffa5c02bbc3e9d8da8f3690e",
+            "c2eb3d4706e56d9ca264bff0e527987f89255a46b78b265f7c0389091425664e",
+            "4889da35760aeb299decc681bedca9e5789b6c4fa6e7f814bc59c5fea0b9bfa9",
+            "7e18c5c0a45d8b82f146b1b976d13b12c56d16c53d837b599f107c709ea1b28b",
+            "2c237c4435edb2ee7421b5bcd3f359a0f1c7df46b9dc3b47ea6786ddf5b6f3e4"
+          ]
+        }
+      ]
+    },
+    "hash-baseline": {
+      "medianSeconds": 0.04631654200011326,
+      "medianPeakRssBytes": 115539968,
+      "runs": [
+        {
+          "elapsedSeconds": 0.05038011299984646,
+          "peakProcessRssBytes": 115539968,
+          "digest": "fae972222d455a2eaee1661ad9625502ec3bfc5ec38b87a6eec5afd5107331b5"
+        },
+        {
+          "elapsedSeconds": 0.04631654200011326,
+          "peakProcessRssBytes": 115404800,
+          "digest": "fae972222d455a2eaee1661ad9625502ec3bfc5ec38b87a6eec5afd5107331b5"
+        },
+        {
+          "elapsedSeconds": 0.042927313999825856,
+          "peakProcessRssBytes": 115884032,
+          "digest": "fae972222d455a2eaee1661ad9625502ec3bfc5ec38b87a6eec5afd5107331b5"
+        }
+      ]
+    },
+    "hash-current": {
+      "medianSeconds": 0.030927946000247175,
+      "medianPeakRssBytes": 48570368,
+      "runs": [
+        {
+          "elapsedSeconds": 0.030927946000247175,
+          "peakProcessRssBytes": 48570368,
+          "digest": "fae972222d455a2eaee1661ad9625502ec3bfc5ec38b87a6eec5afd5107331b5"
+        },
+        {
+          "elapsedSeconds": 0.03124717699984103,
+          "peakProcessRssBytes": 48455680,
+          "digest": "fae972222d455a2eaee1661ad9625502ec3bfc5ec38b87a6eec5afd5107331b5"
+        },
+        {
+          "elapsedSeconds": 0.030447872999957326,
+          "peakProcessRssBytes": 48676864,
+          "digest": "fae972222d455a2eaee1661ad9625502ec3bfc5ec38b87a6eec5afd5107331b5"
+        }
+      ]
+    }
+  },
+  "equivalentPagesImagesAndHashes": true
+}

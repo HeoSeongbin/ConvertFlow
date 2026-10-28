@@ -1,0 +1,94 @@
+{
+  "measuredAt": "2026-10-28T05:54:18.989049+00:00",
+  "environment": "local Docker Desktop, each worker concurrency=1, cpus=1, mem_limit=768m",
+  "batches": [
+    {
+      "workers": 1,
+      "jobs": 6,
+      "pagesPerJob": 8,
+      "edgePixels": 1024,
+      "inputBytesPerJob": 132640,
+      "batchWallSecondsIncludingUpload": 2.3690899999346584,
+      "jobsPerMinute": 151.95708057099102,
+      "medianProcessingSeconds": 0.1089405,
+      "p95ProcessingSecondsNearestRank": 0.119276,
+      "workerDistribution": {
+        "worker@1e2835444945": 6
+      },
+      "jobIds": [
+        "2412ed05-f90f-4acf-8598-02dcc3034671",
+        "63e62f7f-4242-4a5e-ade6-f0cdf4cba05c",
+        "8e4c4099-2d33-4b4a-b30d-c1d597bd9d8e",
+        "9d953353-d501-48a8-bce1-0ea49ed897da",
+        "dd5246b0-d609-40ec-a17e-eb583cdaf6e7",
+        "2dde4a51-801b-414b-a77c-70035c49fea7"
+      ]
+    },
+    {
+      "workers": 2,
+      "jobs": 6,
+      "pagesPerJob": 8,
+      "edgePixels": 1024,
+      "inputBytesPerJob": 132640,
+      "batchWallSecondsIncludingUpload": 3.3717796000419185,
+      "jobsPerMinute": 106.7685444195476,
+      "medianProcessingSeconds": 0.11414350000000001,
+      "p95ProcessingSecondsNearestRank": 0.171886,
+      "workerDistribution": {
+        "worker@36dea6f421a1": 3,
+        "worker@1e2835444945": 3
+      },
+      "jobIds": [
+        "73a92d62-ba94-49d3-8e94-4c836f9f33ff",
+        "f6201852-c830-4f12-8141-21faa6a5e5b4",
+        "5ea9f7ab-2f7f-4095-9fa1-12191265b531",
+        "06eccff4-5e4d-4f8e-b49d-d6ce8837b36c",
+        "7dbf8706-6da5-47f9-b41e-da717ec21f59",
+        "98087097-b945-43a5-99ac-4c5e1dc46381"
+      ]
+    }
+  ],
+  "heldQueue": {
+    "name": "celery",
+    "scope": "infrastructure",
+    "status": "KNOWN",
+    "sampledAt": "2026-10-28T05:54:29.794685+00:00",
+    "readyMessages": 1,
+    "error": null
+  },
+  "boundary": {
+    "jobId": "cc6995dc-651c-41d7-8ebd-a9556762c4e7",
+    "files": 20,
+    "pages": 100,
+    "pixels": 92160000,
+    "durationSeconds": 1.282075
+  },
+  "staleObserverUnknown": true,
+  "dashboard": {
+    "sampledAt": "2026-10-28T05:55:35.181935+00:00",
+    "scope": "workspace",
+    "windowStart": "2026-10-28T04:55:35.181935+00:00",
+    "windowMinutes": 60,
+    "counts": {
+      "QUEUED": 0,
+      "PROCESSING": 0,
+      "RETRY_WAIT": 0,
+      "CANCEL_REQUESTED": 0,
+      "SUCCESS": 13,
+      "FAILED": 0,
+      "CANCELLED": 0
+    },
+    "total": 13,
+    "recentSuccess": 13,
+    "processingSamples": 13,
+    "recentFailedAttempts": 0,
+    "recentSuccessfulAttempts": 13,
+    "throughputJobsPerMinute": 0.21666666666666667,
+    "meanProcessingSeconds": 0.20518807692307692,
+    "maxProcessingSeconds": 1.282075,
+    "meanEndToEndSeconds": 3.1382337692307694,
+    "pendingDispatch": 0,
+    "errors": []
+  },
+  "workspaceIsolation": true
+}

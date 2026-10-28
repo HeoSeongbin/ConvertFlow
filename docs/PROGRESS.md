@@ -1,6 +1,79 @@
 # 개발 진행 현황
 
 기준일: 2026-10-28 (Asia/Seoul)
+현재 Phase: **Phase 5 — 모니터링 및 성능 완료**.
+다음 우선순위: **Phase 6 — UI/UX 개선**. 이번 작업은 Phase 5 범위만 구현했다.
+
+## 시작 상태와 구현
+AGENTS → PROJECT → PROGRESS → DECISIONS → README를 확인하고 실제 소스·Git 상태와 비교했다. main과 origin/main은 b2fd27c로 같았고 변경 사항이 없었다. Phase 4의 Windows 70개 테스트와 정상 Compose 실행 상태를 먼저 확인했다.
+
+- 별도 Observer 서비스: Celery stats/active, Kombu Redis transport의 기본 큐 ready 메시지 수를 PostgreSQL 관측 테이블에 저장
+- Dashboard: workspace 전체 상태 분포, 최근 60분 성공 처리량·실행/접수 시간·실패 Attempt 오류 코드·미발행 예약 통계
+- Worker Monitoring: 실제 응답 ONLINE/UNKNOWN, 슬롯·활성 Task 수·현재 workspace 실행 Job·Heartbeat·최근 성과, 수집 시각
+- Observer 실패·부분 응답·stale은 null/UNKNOWN, 실제 0과 구별. 다른 workspace의 Job ID·파일명·Task args는 반환하지 않음
+- 현재 활성 Job은 DB Attempt의 Worker·메시지 세대·미만료 Lease가 일치해야 표시. 오래된 물리 Task를 새 실행의 Worker로 오귀속하지 않음
+- 0005: 관측 테이블, 상태/Lease·workspace/완료·Attempt/완료 복합 인덱스. 기존 Job/Attempt/Event/Result·오류 보존
+- RGB 변환의 불필요한 RGBA/white canvas 복사 감소. 입력·출력·다운로드·재시도 checksum을 streaming으로 변경
+- 실제 메모리·인덱스·대량 파일·Worker 확장 측정 harness와 원본 보고서, CI 검증 단계 추가
+
+## 실제 검증 결과
+| 항목 | 결과 |
+|---|---|
+| Windows 백엔드 | **80 passed**, 기존 TestClient deprecation warning 1건 |
+| 최종 Linux API 이미지 | **80 passed**, 같은 warning 1건 |
+| 프런트 | **8 passed**, strict TypeScript·production build 로컬/Docker 통과 |
+| Ruff·Python 구문 | format/check·compileall 통과 |
+| PostgreSQL/Alembic | 0005, check 신규 변경 없음, 이전 데이터 보존 migration 회귀 통과 |
+| Compose | 최종 up --build --wait exit 0. Worker 1개·Observer로 복원 |
+| 큐·관측 실연동 | Worker 중지 중 ready 양수, 정상 0, 미응답 UNKNOWN, Observer 중단 후 stale null/UNKNOWN 및 복귀 통과 |
+| 경계 입력 | 20파일×5프레임=100페이지, 92.16M pixels, 실제 PDF·단일 Attempt 성공 |
+| Worker 확장 | 6 Job 배치, Worker 1개 6개 처리 / 2개 각각 3개 처리, 모든 PDF·단일 Attempt 검증 |
+| 활성 작업 | 실제 PROCESSING Task의 Job ID·Heartbeat·Lease 관측, 타 workspace 미노출, 파일 복원 후 동일 Attempt 성공 |
+| 기존 실제 회귀 | Phase 1·2 smoke 및 Phase 3 재시도/취소·Phase 4 실제 SIGKILL/SIGSTOP·중복 메시지/스케줄러·fencing 통과 |
+| 브라우저 | 기존 업로드→성공→Dashboard 완료 수·평균 시간 반영, Worker ONLINE/UNKNOWN·큐 시각 확인. API 실제 중단 시 오류 안내·UNKNOWN/null 전환도 확인 |
+| 원격 CI | 정의만 갱신, GitHub Actions 원격 실행 미수행 |
+
+종료 확인: API 실제 중단 오류 화면 검증 뒤 정상 복원했고 브라우저의 큐 0/Worker ONLINE 재관측을 확인했다. API/Worker/frontend/PostgreSQL/Redis healthy, Dispatcher·Observer 실행, migrate exit 0, Worker 1개다. `alembic current` 0005(head), `alembic check` 신규 변경 없음. 현재 실행 차단 요인은 없다.
+
+실제 활성 관측 최종 Job: **8b2dec4b-bebb-48a2-9699-df56ac160406**. 브라우저 Job: **d58bc506-59fe-4833-a8d9-6d2ea823c9b1**. Phase 1 **23c7690c-2833-4a45-a13c-ff88fc06ae75**, Phase 2 **91ae8852-d412-406d-8b4f-ca880419e53d**. Phase 3 수동 성공 **5a7f6458-4adb-4b75-a71b-96fd38e16b67**(이전 실패 4개 보존). Phase 4 encode kill **9ea26e5b-8704-4080-a1bc-966c763be1ad**, publish kill **a628922a-c464-4f22-adf8-532ff74aed06**, stale owner **269ad9c8-7c07-4eae-94db-c1418b9b7847**. 토큰·쿠키 원문은 기록하지 않았다.
+
+## 실측 성능과 한계
+- 8페이지 2048² RGB TIFF, 별도 Linux process 각 3회: peak RSS 중앙값 **163.63→115.41 MiB**(약 29.5% 감소), 실행 시간 **0.2721→0.1428초**. PDF 페이지·이미지 해시 동일.
+- 64 MiB 합성 checksum: peak RSS **110.19→46.32 MiB**, digest 동일. 작업당 증분/실 Worker 전체 RSS가 아니라 해당 프로세스 최고 RSS다.
+- PostgreSQL TEMP fixture 각 10만 행, warm-cache 3회 EXPLAIN 중앙값: Lease **0.193→0.055ms**, workspace 최근 완료 **1.470→0.046ms**, Attempt 최근 완료 **0.254→0.037ms**. 합성 분포의 쿼리 계획 비교로 운영 성능 보장은 아니다.
+- 실제 6 Job×8페이지 1024² 배치: Worker 1개 **2.3691초**, 2개 **3.3718초**. 입력 검증·업로드·DB/poll 오버헤드가 포함된 작은 표본이며 확장 속도 향상은 확인되지 않았다. 기본 1개 유지.
+- 원본 JSON·fixture·환경·표본·재현 방법은 **docs/benchmarks/README.md**, phase5-memory/indexes/load/active.json에 보존한다.
+
+## 발견한 문제와 수정
+1. Redis의 빈 큐 리스트 키 제거 때문에 Kombu passive 조회가 404를 반환했다. 설치된 transport 구현을 확인하고 표준 선언의 priority-aware 메시지 수를 사용했다. 실제 양수/0/UNKNOWN을 다시 검증했다.
+2. SQLite 초 단위 DB 시각 때문에 방금 완료한 Attempt가 최근 집계에서 빠졌다. DB 시각을 밀리초로 개선하고 시간창/누락 시각 회귀를 추가했다.
+3. ru_maxrss에 부모 프로세스 fixture 생성 peak가 섞여 메모리 비교가 동일하게 나왔다. 이 결과를 폐기하고 해당 exec의 VmHWM으로 각 3회 재측정했다.
+4. 처음의 인덱스 fixture는 조건 선택도 차이가 없어 개선이 없었다. 실제로 구분되는 만료/최근 이력 분포를 명시하고 그 분포의 계획만 보고했다. 일반적인 가속을 주장하지 않는다.
+5. 부하 스크립트 comprehension의 assignment-expression 구문 오류를 실행 전에 발견해 수정했다. compileall을 CI에 추가했다. 실패한 실행을 검증 성공으로 집계하지 않았다.
+6. Task UUID만으로 Worker에 Job을 귀속하면 오래된 Task가 새 Attempt의 Heartbeat를 표시할 수 있었다. 현재 세대·Attempt Worker·Lease를 대조하고 회귀 및 최종 실제 활성 Task 검증을 수행했다.
+7. API 조회 실패 중 유지되는 화면 캐시가 ONLINE/큐 수치를 계속 표시하지 않도록 화면에서도 조회 실패·stale 기준을 적용했다. 실제 0/UNKNOWN과 원본 캐시 보존·만료 경계 테스트를 추가했다.
+
+## 변경 파일
+- 신규 Backend: backend/alembic/versions/0005_monitoring.py, app/api/monitoring.py, services/observer.py, storage/checksums.py, tests/test_phase5.py
+- Backend 수정: api/routes.py, converters/image_pdf.py, core/config.py, main.py, models/job.py, services/leases.py·lifecycle.py, tasks/convert.py
+- 신규 UI: frontend/src/features/monitoring/Monitoring.tsx·Monitoring.test.ts, 수정 app/App.tsx·style.css
+- 설정/실연동: docker-compose.yml, .env.example, .github/workflows/ci.yml, scripts/benchmark_memory.py·benchmark_indexes.py·benchmark_phase5.py·smoke_phase5_active.py
+- 문서/증거: README, docs/PROGRESS·DECISIONS·API·ARCHITECTURE·TEST-SCENARIOS, docs/benchmarks/*, screenshots/phase5-dashboard.png·phase5-workers.png·phase5-api-unavailable.png
+
+## 남은 제약과 다음 작업
+Phase 6에서 업로드·진행률·이벤트·결과 미리보기 등 UI/UX를 개선한다. 이번에 전체 UI 재설계·미리보기·알림·설정 변경 기능은 추가하지 않았다. Worker 물리 실행과 논리 Job 상태, 큐 메시지와 DB 예약은 서로 다른 값이다. 네트워크 수집 시각은 서로 다르며 즉시 일치하지 않는다.
+
+작업공간 capability만 존재하며 공개 운영용 인증/운영자 권한·할당량은 없다. 자동 파일 만료/청소·orphan 정리·Idempotency-Key·장기 부하/누수·실사용 사진 성능·저장소 Playwright runner·로그 JSON 통일·TestClient warning은 남아 있다. PDF Writer는 인코딩 객체를 보관하며 완전 streaming이 아니다. 이전 Worker 이름의 관측 기록도 자동 삭제하지 않는다.
+
+기존 Lease·재시도·취소·원자 게시·Job/Attempt/오류 이력을 보존했고 제품 API에 변환·fault flag를 넣지 않았다. 이번 요청에서 커밋·푸시는 수행하지 않았다.
+
+2026-10-28 후속 사용자 요청으로 검증한 Phase 5 변경을 HeoSeongbin <heosb316@gmail.com> 작성자의 로컬 커밋으로 정리한다. 푸시는 수행하지 않는다.
+
+---
+
+# Phase 4 기록 (이전 실행)
+
+기준일: 2026-10-28 (Asia/Seoul)
 현재 Phase: **Phase 4 — 멱등성 및 Worker 장애 복구 완료**.
 다음 우선순위: **Phase 5 — 모니터링 및 성능**. 이번 변경은 Phase 4 범위다.
 

@@ -28,6 +28,8 @@ class Job(Base):
     __tablename__ = "conversion_job"
     __table_args__ = (
         Index("ix_job_workspace_created", "workspace_hash", "created_at"),
+        Index("ix_job_status_lease", "status", "lease_expires_at"),
+        Index("ix_job_workspace_completed", "workspace_hash", "completed_at"),
     )
     job_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     access_hash: Mapped[str] = mapped_column(String(64))
@@ -104,6 +106,7 @@ class Attempt(Base):
         UniqueConstraint("job_id", "attempt_number"),
         UniqueConstraint("job_id", "generation"),
         CheckConstraint("attempt_number >= 1"),
+        Index("ix_attempt_job_finished", "job_id", "finished_at"),
     )
     attempt_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     job_id: Mapped[str] = mapped_column(ForeignKey("conversion_job.job_id"), index=True)
@@ -148,3 +151,21 @@ class Event(Base):
     details: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     __table_args__ = (UniqueConstraint("job_id", "sequence"),)
+
+
+class MonitorSnapshot(Base):
+    __tablename__ = "monitor_snapshot"
+    key: Mapped[str] = mapped_column(String(24), primary_key=True)
+    sampled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    data: Mapped[dict] = mapped_column(JSON)
+
+
+class WorkerObservation(Base):
+    __tablename__ = "worker_observation"
+    worker_name: Mapped[str] = mapped_column(String(255), primary_key=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_probe_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    responding: Mapped[bool] = mapped_column(Boolean)
+    concurrency: Mapped[int | None] = mapped_column(Integer)
+    active_job_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    active_count: Mapped[int | None] = mapped_column(Integer)

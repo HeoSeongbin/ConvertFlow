@@ -1,4 +1,4 @@
-# Phase 4 API 계약
+# Phase 5 API 계약
 기본 경로 `/api/v1`, OpenAPI `/openapi.json`, Swagger `/docs`. 기존 단일 파일 multipart와 X-Job-Token을 유지한다.
 
 ## 업로드
@@ -69,3 +69,34 @@ retryable은 해당 실패의 **자동** 재시도 정책을 기록한 값이다
 Phase 4의 Job 목록/상세에 `heartbeatAt`, `leaseExpiresAt`(UTC ISO 또는 null)을 추가했다. 완료 시 Lease는 null, 마지막 Heartbeat는 이력으로 남긴다. 복구 시 `RECOVERY_REQUIRED` 이벤트, 이전 Attempt의 `WORKER_LEASE_EXPIRED`, `RETRY_SCHEDULED`를 보존한다. 취소 요청 중 만료되면 새 Attempt 없이 CANCELLED로 확정한다. RECOVERY_REQUIRED는 이번 자동 회수의 이벤트이며 별도 API 조작이 필요한 장기 상태로 노출하지 않는다.
 
 Idempotency-Key는 미구현이며 같은 입력을 새로 업로드하면 별도 Job이다. monitoring은 Phase 5 범위다.
+
+## Dashboard
+`GET /api/v1/monitoring/dashboard`는 cf_workspace 소유 작업만 SQL 집계한다. 쿠키가 없거나 이력이 없으면 빈 통계이며 다른 workspace나 개별 X-Job-Token의 작업을 합산하지 않는다.
+
+- sampledAt, scope=workspace, windowStart, windowMinutes=60
+- counts: 각 상태 전체 이력 개수, total
+- recentSuccess: 최근 성공 Job 수, throughputJobsPerMinute=recentSuccess/60
+- recentFailedAttempts, recentSuccessfulAttempts: 최근 완료한 Attempt 수
+- meanProcessingSeconds, maxProcessingSeconds: 최근 성공 Job의 마지막 실행 시작→완료. 시작 시각 누락은 제외, processingSamples로 표본 수 확인
+- meanEndToEndSeconds: 최근 성공 Job의 접수→완료, 대기·재시도 포함
+- pendingDispatch: 현재 세대의 미발행 QUEUED/RETRY_WAIT Outbox 수
+- errors: 최근 FAILED Attempt 오류 코드 상위 10개, `{code,count}`. 재처리 성공해도 과거 오류 보존
+
+시간 표본이 없으면 null이고 수치 0과 구별한다. DB 장애 시 조회 오류이며 추측한 통계를 반환하지 않는다.
+
+## Worker/큐 관측
+`GET /api/v1/monitoring/workers`는 broker를 직접 호출하지 않고 Observer가 저장한 값을 읽는다.
+
+- sampledAt: API DB 조회 시각, workersSampledAt: 수집 종료 시각
+- workersError: NO_WORKER_REPLY/INSPECT_UNAVAILABLE/STALE_OBSERVATION 또는 null
+- staleAfterSeconds: 기본 30, totalKnown: 과거 응답을 포함한 알려진 Worker 수, items: 최근 100개
+- Worker: name, status(ONLINE/UNKNOWN), lastSeenAt, lastProbeAt, concurrency, activeCount, jobs, recentSuccess, recentFailedAttempts
+- jobs: 현재 workspace의 Job ID·상태·heartbeatAt·leaseExpiresAt. 실제 active Task 세대와 DB 활성 Attempt Worker·현재 세대·미만료 Lease가 일치하는 실행만 포함. 이전 세대 Task를 새 실행의 Worker로 표시하지 않는다.
+- activeCount는 인프라 전체의 관측 Task 수이므로 jobs 길이와 다를 수 있다. 다른 workspace/오래된 Task가 있을 수 있다. 최근 성공/실패 Attempt는 이 workspace의 60분 집계다.
+- queue: name(기본 celery), scope=infrastructure, status(KNOWN/UNKNOWN), sampledAt, readyMessages, error
+
+concurrency/activeCount는 미확인 또는 stale일 때 null이고 readyMessages도 미확인 시 null이다. 큐/Worker 0은 실제 확인한 값이다. 큐는 Kombu Redis transport가 반환한 ready 메시지 수이며 reserved·실행·DB 예약·다른 큐를 합산하지 않는다. 증분 수집 시점 차이와 중복 전달로 Job 수와 일치하지 않을 수 있다.
+
+기본 수집 sleep 10초 + 네트워크 요청 시간, UI polling 5초, 30초 stale 기준이다. 미응답/관측 지연을 OFFLINE 또는 사망으로 해석하지 않는다. Worker 이름·슬롯·활성 Task 수·큐 수는 localhost 개발 인프라 전체 공개이며 운영자 계정 인증은 미구현이다.
+
+프런트도 이전 응답의 수집 시각과 현재 조회 오류를 확인한다. API 오류 중 남은 화면 캐시를 최신 ONLINE/큐 값으로 간주하지 않고 UNKNOWN/null로 표시한다.

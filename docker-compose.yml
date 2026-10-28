@@ -8,6 +8,8 @@ x-backend: &backend
     LEASE_SECONDS: ${LEASE_SECONDS:-30}
     HEARTBEAT_SECONDS: ${HEARTBEAT_SECONDS:-5}
     REDISPATCH_SECONDS: ${REDISPATCH_SECONDS:-30}
+    MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-10}
+    MONITOR_STALE_SECONDS: ${MONITOR_STALE_SECONDS:-30}
   volumes:
     - storage:/data
   restart: unless-stopped
@@ -73,6 +75,9 @@ services:
   dispatcher:
     <<: *backend
     command: [python, -m, app.services.dispatcher]
+  observer:
+    <<: *backend
+    command: [python, -m, app.services.observer]
   frontend:
     build: ./frontend
     ports:

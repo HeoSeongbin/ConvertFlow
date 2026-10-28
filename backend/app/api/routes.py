@@ -20,6 +20,7 @@ from app.core.db import Session
 from app.core.config import settings
 from app.models.job import Job, JobFile, Outbox, Result, Event, Attempt
 from app.storage.local import storage
+from app.storage.checksums import checksum as file_checksum
 from app.services.validation import validate_image, InvalidInput
 from app.services.jobs import authorized, serialize, token_hash, WORKSPACE_COOKIE, iso
 from app.services.events import record_event
@@ -289,7 +290,7 @@ def download(
         if (
             not path.is_file()
             or path.stat().st_size != expected_size
-            or hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash
+            or file_checksum(path) != expected_hash
         ):
             raise HTTPException(
                 410,

@@ -1,4 +1,4 @@
-# 시스템 아키텍처 — Phase 4
+# 시스템 아키텍처 — Phase 5
 ```mermaid
 flowchart LR
   Browser[React 업로드 / 작업 목록 / 상세] --> Nginx
@@ -10,6 +10,8 @@ flowchart LR
   Redis --> Worker[Linux Celery PDF 변환]
   Worker --> PG
   Worker --> Storage
+  Observer[Celery / Kombu 관측] --> Redis
+  Observer --> PG
 ```
 
 ## 파일 처리 흐름
@@ -66,3 +68,10 @@ Phase 4는 Job의 heartbeat_at/lease_expires_at을 DB 시각으로 관리한다.
 0003은 기존 성공/실패/실행 중 Job을 LEGACY Attempt 하나로 보존하고 결과에 연결한다. 과거 Worker나 누락된 시간을 추정하지 않는다. 기존 이벤트는 원문을 유지하며 과거 Attempt 귀속을 임의로 채우지 않는다. 0004는 기존 데이터에 nullable Lease 컬럼만 추가한다. 구버전 Worker는 fencing을 모르므로 배포 전에 drain/중지하고 함께 교체해야 한다. Phase 4 Worker의 비정상 종료와 재시작 복구는 지원한다.
 
 제품의 변환은 별도 Celery Worker가 수행한다. 장애 주입 테스트에서만 API 컨테이너의 별도 테스트 프로세스에 Celery solo test worker와 전용 큐를 사용하며 실제 Redis/PostgreSQL에 연결한다. 이때 일반 Dispatcher는 중지 후 반드시 복원한다. 테스트용 monkeypatch는 제품 API나 운영 플래그에 노출하지 않는다.
+
+## Phase 5 관측과 성능
+Observer 컨테이너는 Celery Inspect stats/active와 Kombu Redis transport의 기본 큐 메시지 수를 조회하고 monitor_snapshot/worker_observation에 저장한다. API는 수집을 실행하지 않고 DB 캐시와 workspace SQL 통계를 조회한다. 수집 실패·stale은 UNKNOWN/null이며 마지막 응답 시각과 조회 시각을 구분한다. 기존 Lease Heartbeat는 실행 소유권용이고 Inspect의 Worker 응답과 별개다. Collector 지연이 Lease/작업 상태를 변경하지 않는다.
+
+Worker 인프라 메타데이터는 localhost 전체 값이며 활성 Job·최근 성과·오류는 workspace로 제한한다. 활성 Job은 현재 Attempt의 Worker, 메시지 세대, 미만료 Lease를 대조한다. 오래된 물리 Task가 남아도 새 Attempt를 그 Worker의 실행으로 표시하지 않는다. Observer 중단 시에도 변환과 API는 계속 동작하고 관측만 stale로 바뀐다.
+
+0005는 관측 테이블과 상태/Lease·workspace/완료·Attempt/완료 복합 인덱스를 추가한다. SQL 집계로 페이지 이력을 모두 Python 메모리에 읽지 않는다. RGB raster는 RGBA/white canvas 복사를 생략하고 기타 모드 합성은 유지한다. 파일 checksum은 bounded-buffer streaming으로 계산한다. PDF Writer의 인코딩 객체 보관은 남으며 전체 스트리밍/장기 누수 최적화를 주장하지 않는다. 실제 fixture·부하·계획·제한은 benchmarks/README.md를 따른다.

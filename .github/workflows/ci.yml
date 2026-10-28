@@ -10,6 +10,7 @@ jobs:
           python-version: '3.12'
       - run: pip install -r backend/requirements.lock.txt
       - run: ruff check backend scripts
+      - run: python -m compileall -q backend/app scripts
       - run: python -m pytest -q
         working-directory: backend
       - uses: actions/setup-node@v4
@@ -45,6 +46,10 @@ jobs:
           docker compose exec -T -e PYTHONPATH=/app api python /tmp/smoke_phase4.py
       - name: Phase 4 Compose prefork and service outages
         run: python scripts/smoke_phase4_compose.py
+      - name: Phase 5 monitoring and load checks
+        run: python scripts/benchmark_phase5.py --output phase5-load.json
+      - name: Phase 5 current task attribution
+        run: python scripts/smoke_phase5_active.py
       - if: always()
         run: docker compose logs --no-color
       - if: always()

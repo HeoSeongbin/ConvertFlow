@@ -1,10 +1,10 @@
-import hashlib
 from datetime import timedelta
 from fastapi import HTTPException
 from sqlalchemy import select, update
 from app.core.config import settings
 from app.models.job import Job, JobFile, Attempt, Outbox, now
 from app.storage.local import storage
+from app.storage.checksums import checksum as file_checksum
 from app.services.events import record_event
 from app.services.errors import MANUAL_RETRY_CODES, Failure, retry_delay
 from app.services.leases import alive, clock
@@ -168,10 +168,7 @@ def request_retry(db, job_id, expected_generation: int):
         )
     for file in files:
         path = storage.path(file.storage_path)
-        if (
-            not path.is_file()
-            or hashlib.sha256(path.read_bytes()).hexdigest() != file.checksum
-        ):
+        if not path.is_file() or file_checksum(path) != file.checksum:
             raise HTTPException(
                 409,
                 detail={

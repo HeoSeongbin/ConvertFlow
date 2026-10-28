@@ -71,16 +71,30 @@ class ImagePDFConverter:
                     for frame_index in range(frames):
                         original.seek(frame_index)
                         original.load()
-                        with ImageOps.exif_transpose(original).convert("RGBA") as image:
-                            with Image.new("RGB", image.size, "white") as background:
-                                background.paste(image, mask=image.getchannel("A"))
-                                stream = io.BytesIO()
-                                background.save(
+                        stream = io.BytesIO()
+                        with ImageOps.exif_transpose(original) as oriented:
+                            if oriented.mode == "RGB":
+                                # Opaque RGB needs neither an RGBA copy nor a white canvas.
+                                oriented.save(
                                     stream,
                                     "PDF",
                                     resolution=96.0,
                                     quality=options.quality,
                                 )
+                            else:
+                                with oriented.convert("RGBA") as image:
+                                    with Image.new(
+                                        "RGB", image.size, "white"
+                                    ) as background:
+                                        background.paste(
+                                            image, mask=image.getchannel("A")
+                                        )
+                                        background.save(
+                                            stream,
+                                            "PDF",
+                                            resolution=96.0,
+                                            quality=options.quality,
+                                        )
                         source_page = PdfReader(stream).pages[0]
                         width, height = (
                             float(source_page.mediabox.width),

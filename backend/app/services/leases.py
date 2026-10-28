@@ -1,7 +1,7 @@
 """DB-clock leases. Expired owners cannot renew or publish, even before recovery."""
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from threading import Event, Thread
 from sqlalchemy import select, func, update
 from app.core.config import settings
@@ -17,12 +17,12 @@ def clock(db):
         select(
             func.clock_timestamp()
             if db.bind.dialect.name == "postgresql"
-            else func.current_timestamp()
+            else func.strftime("%Y-%m-%d %H:%M:%f", "now")
         )
     )
     from app.services.jobs import utc
 
-    return utc(value)
+    return utc(datetime.fromisoformat(value) if isinstance(value, str) else value)
 
 
 def alive(job, instant):

@@ -1,4 +1,3 @@
-import hashlib
 import logging
 import os
 import socket
@@ -9,6 +8,7 @@ from sqlalchemy import update, select
 from app.core.db import Session
 from app.models.job import Job, JobFile, Result, Attempt, now
 from app.storage.local import storage
+from app.storage.checksums import checksum as file_checksum
 from app.converters.image_pdf import ImagePDFConverter, validate_pdf
 from app.tasks.celery_app import celery_app
 from app.schemas.options import ConversionOptions
@@ -109,7 +109,7 @@ def convert_job(job_id: str, generation: int = 1):
                 guard(db, job_id, generation, attempt_id)
             current_file = file.original_filename
             source = storage.path(file.storage_path)
-            if hashlib.sha256(source.read_bytes()).hexdigest() != file.checksum:
+            if file_checksum(source) != file.checksum:
                 raise InvalidInput(
                     "INVALID_FILE", "입력 파일 무결성 검증에 실패했습니다."
                 )
@@ -166,7 +166,7 @@ def convert_job(job_id: str, generation: int = 1):
             )
         relative = f"results/{job_id}/{attempt_id}.pdf"
         output = storage.path(relative)
-        checksum = hashlib.sha256(temporary.read_bytes()).hexdigest()
+        checksum = file_checksum(temporary)
         size = temporary.stat().st_size
         with Session.begin() as db:
             job = guard(db, job_id, generation, attempt_id)

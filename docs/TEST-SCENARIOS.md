@@ -1,7 +1,7 @@
-# 검증 시나리오 — Phase 4
+# 검증 시나리오 — Phase 5
 
 ## 단위·컴포넌트 검증
-Phase 4 시작 전 기존 백엔드 64개 테스트를 재실행했다. 최종 Windows·Linux 백엔드는 각각 70 passed이며 httpx TestClient deprecation warning 1건이 남아 있다. 프런트 4개 테스트·strict 타입 검사·production build와 Ruff가 통과했다.
+Phase 5 시작 전 기존 백엔드 70개 테스트를 재실행했다. 최종 Windows·Linux 백엔드는 각각 80 passed이며 httpx TestClient deprecation warning 1건이 남아 있다. 프런트 8개 테스트·strict 타입 검사·production build와 Ruff가 통과했다. 상세 결과는 PROGRESS.md를 따른다.
 
 ```bash
 cd backend
@@ -37,7 +37,7 @@ docker compose exec -T api python -m pytest -q -p no:cacheprovider
 docker compose exec -T api alembic check
 docker compose ps
 ```
-실제 Compose prefork Worker로 단일 PNG 및 3페이지 TIFF 병합·정렬·출력 옵션·다운로드·오류 이력을 확인한다. PostgreSQL 스키마는 0004이며 Alembic check에서 신규 변경이 없었다. API/Worker/frontend/Redis/PostgreSQL healthy, Dispatcher 실행, migrate 정상 종료를 확인했다.
+실제 Compose prefork Worker로 단일 PNG 및 3페이지 TIFF 병합·정렬·출력 옵션·다운로드·오류 이력을 확인한다. 현재 PostgreSQL 스키마는 0005다. API/Worker/frontend/Redis/PostgreSQL health, Dispatcher·Observer 실행, migrate 정상 종료와 Alembic check를 확인한다.
 
 ## Phase 3 실제 Redis/PostgreSQL 장애 주입
 **로컬 개발/격리 CI용이며 기존 활성 Job이 없어야 한다.** 일반 Dispatcher를 멈춘 뒤 API 컨테이너의 별도 테스트 프로세스에서 전용 큐와 Celery solo test worker를 사용한다. HTTP API·실제 Redis·PostgreSQL·스토리지를 사용하며 task_always_eager로 대체하지 않는다. monkeypatch는 해당 테스트 프로세스에만 적용하고 제품 API에는 오류 주입 플래그가 없다.
@@ -127,4 +127,24 @@ docker compose exec -T api alembic check
 - PostgreSQL 35초 중단으로 기본 Lease 만료, 이전 Worker DB 상태 변경 차단, DB 복귀 후 새 Attempt 성공.
 - API·Dispatcher 재시작 후 같은 Job/Result 지속.
 
-70개 단위/회귀 테스트와 위 실제 장애 시나리오는 별개 검증이다. SQLite 테스트만으로 PostgreSQL 다중 Worker 보장을 주장하지 않는다. 원격 CI는 위 단계를 정의했지만 로컬 실행 결과만 보고한다. 다음 Phase 5는 관측 지표·성능 측정이다.
+Phase 4 당시 70개 단위/회귀 테스트와 위 실제 장애 시나리오는 별개 검증이다. SQLite 테스트만으로 PostgreSQL 다중 Worker 보장을 주장하지 않는다. 원격 CI는 위 단계를 정의했지만 로컬 실행 결과만 보고한다.
+
+## Phase 5 통계·관측·부하
+백엔드 신규 회귀는 SQL 집계·최근 시간창·재시도 성공 뒤 오류 보존·쿠키별 격리, 샘플 없는 시간 null, 실제 0과 UNKNOWN 구분, Observer 실패/stale·부분 응답, Task args 검증, 이전 세대/다른 Worker 오귀속 차단, streaming checksum을 다룬다. 프런트는 UNKNOWN/표본 없음 표시를 확인하며 실제 브라우저에서 메뉴·변환 성공·Dashboard 반영을 별도 검증한다.
+
+```bash
+python -m compileall -q backend/app scripts
+ruff check backend scripts
+python scripts/benchmark_phase5.py --output .storage/phase5-load.json
+python scripts/smoke_phase5_active.py
+```
+
+실행 중 다른 작업이 없는 localhost Compose에서 실행한다. 부하 harness는 Worker를 중지해 큐 ready 양수를 관측하고 20파일/100페이지를 실제 PDF로 만든다. Worker를 1→2개로 바꾸어 각 6 Job 배치의 시간·분산·Attempt/다운로드를 확인하며, Observer 중단 후 30초 stale이면 UNKNOWN/null, 재기동 후 KNOWN으로 복귀하는지 검사한다. 마지막에 Worker 1개와 Observer로 복원한다.
+
+활성 Task harness는 생성한 입력만 FIFO로 교체하고 실제 PROCESSING Job ID·Heartbeat·슬롯·Task 관측을 확인한다. 다른 workspace의 응답에 해당 UUID가 없는지 검사하고 FIFO를 정규 파일로 복원해 같은 Attempt의 SUCCESS를 확인한다. 실패 경로는 Worker 종료 후 파일·서비스를 복원한다. 기존 사용자 입력은 사용하지 않는다.
+
+메모리/인덱스 방법과 전체 원본은 [benchmarks/README.md](benchmarks/README.md)를 따른다. benchmark_memory.py는 Linux 전용이며 각 3회 비교, benchmark_indexes.py는 rollback되는 PostgreSQL TEMP fixture만 사용한다. 테스트·부하·관측 시각은 서로 다르며 수치를 임의의 운영 보장으로 확대하지 않는다.
+
+실제 브라우저에서 Dashboard의 전체/최근 작업 수·평균 처리시간 반영과 Worker ONLINE/UNKNOWN·큐 수집 시각을 확인했다. 증거는 screenshots/phase5-dashboard.png·phase5-workers.png다. 저장소 Playwright runner는 아직 없으며 이번에는 세션 브라우저로 검증했다. 다음 Phase 6는 UI/UX 개선이다.
+
+API만 잠시 중지하고 정상 Observer/Worker를 유지한 상태에서도 브라우저가 이전 ONLINE/큐 캐시를 UNKNOWN으로 낮추고 연결 오류를 표시하는지 확인했다. API를 즉시 복원했다. 증거: screenshots/phase5-api-unavailable.png. 프런트 회귀는 실제 0/누락, API 오류 중 캐시 보존, 30초 만료 경계를 포함한다.

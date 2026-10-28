@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     lease_seconds: int = Field(default=30, ge=3)
     heartbeat_seconds: int = Field(default=5, ge=1)
     redispatch_seconds: int = Field(default=30, ge=3)
+    monitor_interval_seconds: int = Field(default=10, ge=5)
+    monitor_stale_seconds: int = Field(default=30, ge=10)
 
     @model_validator(mode="after")
     def lease_interval(self):

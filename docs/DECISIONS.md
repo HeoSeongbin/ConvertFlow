@@ -96,3 +96,28 @@ DB 연결 3초, SQL 5초, lock wait 3초 제한으로 장애 중 무한 대기�
 
 ## ADR-030 실제 프로세스 장애 검증 — 채택
 전용 Redis 큐에 별도 Celery solo 프로세스를 기동하고 테스트 프로세스만 converter/파일 이동을 gate한다. SIGKILL, SIGSTOP/SIGCONT, 두 Worker에 같은 세대 12회 전달을 실제 PostgreSQL과 Redis로 검증한다. 정상 제품 설정에 fault flag는 추가하지 않는다. 정상 Compose prefork Worker는 별도 호스트 harness에서 새 테스트 입력을 FIFO로 잠깐 교체해 입력 읽기에 정지시키고 컨테이너 SIGKILL/DB 장애를 재현한다. 각 harness는 프로세스·서비스를 finally로 복원하며 볼륨을 삭제하지 않는다. 이는 localhost 전용의 서비스 중단을 포함한 개발 검증 도구다.
+
+## ADR-031 Phase 5 관측 책임과 조회 범위 — 채택
+변환 Worker·Dispatcher와 별도로 Observer 프로세스를 둔다. Celery Inspect stats/active와 기본 celery 큐의 메시지 수를 수집해 PostgreSQL monitor_snapshot/worker_observation에 저장한다. API 요청에서 broker inspect를 실행하지 않고 캐시와 SQL 집계만 조회한다. 별도 계정 인증이 없는 localhost 환경에서 Worker 이름·슬롯·활성 Task 수·큐 수치는 인프라 전체 값으로 공개하고, Job 통계·오류·최근 성과·활성 Job ID는 기존 cf_workspace 해시로 제한한다. 다른 workspace의 Job 이름·ID·Task args는 API에 노출하지 않는다. capability 없는 브라우저의 작업 통계는 비어 있다. 사용자 계정/운영자 권한을 구현한 것은 아니다.
+
+## ADR-032 수집 시각과 UNKNOWN — 채택
+수집은 기본 sleep 10초에 Inspect 요청 2초 timeout 두 번 등을 더한 주기로 동작하고 UI는 5초마다 조회한다. 성공한 stats 응답이 최근 30초 이내일 때만 ONLINE이다. 미응답·지연·Observer 중단은 UNKNOWN이며 OFFLINE/프로세스 사망으로 단정하지 않는다. 활성 목록을 받지 못하면 activeCount=null, 큐 오류나 stale 캐시는 readyMessages=null로 반환한다. 0은 실제로 관측한 빈 값이다. 마지막 응답·관측 시각과 임계값을 함께 표시한다. Worker 교체 전 기록도 UNKNOWN으로 보존하고 최근 100개만 반환한다.
+
+활성 Task의 UUID만으로 현재 Job 실행을 귀속하면 오래된 Task가 같은 Job의 새 Attempt Heartbeat를 자신의 것으로 표시할 수 있다. Task 세대까지 관측하고 현재 DB Attempt의 Worker·세대·미만료 Lease가 일치할 때만 workspace Job 링크를 제공한다. 물리 activeCount는 별도 수치이므로 표시 가능한 현재 Job 수와 달라도 조작하지 않는다.
+
+API 연결이 끊긴 동안 TanStack Query가 이전 성공 데이터를 보관하더라도 ONLINE/큐 값을 계속 확정값으로 표시하지 않는다. 화면도 조회 실패·관측 시각 만료를 확인해 UNKNOWN/null로 낮추고 오류 안내를 제공한다. 기존 캐시 자체는 변경하지 않아 정상 재조회 후 복귀할 수 있다.
+
+설치된 Kombu 5.5.4 Redis transport에서 passive queue_declare는 빈 리스트 키가 제거되면 404를 반환했다. `_has_queue`, `_new_queue`, queue_declare 구현을 직접 확인하고 표준 `queue_declare(passive=False)`를 사용한다. Redis의 `_new_queue`는 이 경로에서 no-op이고 transport의 priority-aware 메시지 수 반환을 이용한다. Redis 키 이름/LLEN을 직접 추정하지 않는다. 이 값은 기본 celery 큐의 ready 메시지이며 reserved/active/DB 예약 수와 다르다. 다른 테스트 전용 큐를 합산하지 않는다.
+
+## ADR-033 집계 의미와 인덱스 — 채택
+상태 분포는 workspace 전체 이력이고 처리량·성공 시간·실패 Attempt는 최근 60분이다. 처리량은 성공 Job 수/60분, 실행 시간은 마지막 성공 started_at→completed_at, 접수 지연 포함 시간은 created_at→completed_at이다. 누락된 시작 시각은 평균 표본에서 제외하고 표본 수를 반환한다. 실패 통계는 Job의 현재 오류가 아니라 완료한 FAILED Attempt를 세므로 재시도 후 성공해도 오류가 남는다. SQL 집계로 이력을 통째로 메모리에 적재하지 않는다.
+
+0005는 관측 테이블과 (status,lease_expires_at), (workspace_hash,completed_at), (job_id,finished_at) 인덱스만 추가한다. Job/Attempt/Event/Result 이관 값은 변경하지 않는다. PostgreSQL TEMP 두 테이블 각각 10만 행의 동일 조건에서 기존 단일 인덱스와 추가 복합 인덱스를 EXPLAIN ANALYZE/BUFFERS로 비교했다. 이 합성 분포의 결과를 운영 전체 쿼리 성능 보장으로 확대하지 않는다. SQLite 검증에서 초 단위 DB 시각으로 방금 완료한 Attempt가 시간창 밖에 놓이는 문제를 확인해 밀리초 DB 시각으로 개선했다.
+
+## ADR-034 메모리 개선과 검증 경계 — 채택
+opaque RGB 입력은 EXIF 정규화 후 RGB를 직접 PDF 인코딩한다. 불필요한 RGBA 복사·흰 RGB 캔버스를 생략하고 그 외 모드는 기존 alpha→white 합성을 유지한다. 입력/출력/다운로드/재시도 checksum은 파일 전체 read_bytes 대신 hashlib.file_digest 스트리밍을 사용한다. 기존 페이지 순서·옵션·진행/Lease 검사·결과 게시 트랜잭션은 유지한다. Writer의 인코딩 PDF 객체 보관은 남아 있어 완전한 streaming 변환은 아니다.
+
+별도 Linux interpreter에서 Phase 4 b2fd27c의 converter와 현재 converter를 같은 8페이지 2048² RGB TIFF로 각 3회 측정하고 모든 PDF 페이지·이미지 해시 일치를 검사했다. fork/exec 이전 부모 최고 메모리가 섞일 수 있는 ru_maxrss 대신 해당 프로세스 /proc/self/status VmHWM을 사용한다. 64MiB 합성 파일 checksum도 별도 비교한다. 프로세스 전체 peak이며 실 Worker 전체/작업당 증분 메모리나 장기 누수를 측정한 것은 아니다.
+
+## ADR-035 실측 보고와 Worker 확장 — 채택
+실제 Compose에서 20파일×5프레임=100페이지/92.16M pixels 경계와 6 Job×8페이지 부하를 검증한다. Worker 1개와 2개 모두 concurrency=1, 컨테이너당 CPU 1/768MiB다. 작은 부하는 업로드 검증·DB·수집 오버헤드 영향이 커 이번 결과에서 Worker 2개가 더 빠르지 않았다. 작업 분산과 결과 일관성만 확인하고 무조건적인 선형 가속을 주장하지 않는다. 기본 Worker 1개를 유지한다. 원본 JSON·EXPLAIN 계획과 fixture·환경·표본 수를 docs/benchmarks에 보존한다. 벤치마크는 localhost 개발용이며 서비스 scale/중단을 포함하고 finally로 Worker 1개와 Observer를 복원한다. CI는 시나리오만 추가했으며 원격 실행은 이번 검증에 포함하지 않는다.
