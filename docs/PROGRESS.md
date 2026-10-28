@@ -1,5 +1,58 @@
 # 개발 진행 현황
 
+기준일: 2026-10-28 (Asia/Seoul)
+현재 Phase: **Phase 4 — 멱등성 및 Worker 장애 복구 완료**.
+다음 우선순위: **Phase 5 — 모니터링 및 성능**. 이번 변경은 Phase 4 범위다.
+
+## 시작 상태와 구현
+AGENTS → PROJECT → PROGRESS → DECISIONS → README 순서로 확인했다. main은 origin/main의 8fa16ff와 같고 변경이 없었다. 기존 Windows 백엔드 64개 테스트를 재확인했다. Docker Desktop을 기동하고 정상 서비스 상태를 확인한 뒤 구현했다.
+
+- 0004: Job heartbeat_at/lease_expires_at nullable 컬럼·만료 조회 index, 이전 Job/Attempt/오류/결과 보존
+- Claim·Heartbeat의 row lock 이후 PostgreSQL DB 시각 사용, 기본 Lease 30초·독립 Heartbeat 5초
+- 세대+Attempt+미만료 Lease로 진행/실패/취소 완료/결과 확정 fencing, 만료 Lease 재갱신 금지
+- Dispatcher의 3초 주기 회수, SKIP LOCKED 20개 배치, 오류 Attempt·다음 세대·Outbox 원자 저장
+- WORKER_LEASE_EXPIRED는 기존 최대 3회 자동 재시도 정책을 사용하고 상한 후 FAILED/수동 재처리
+- CANCEL_REQUESTED 소유권 만료 시 재실행 없이 CANCELLED, RECOVERY_REQUIRED 이벤트 보존
+- 발행 후 30초 미획득 QUEUED 메시지 재발행, 원자 Claim으로 중복 메시지 억제
+- DB connect/SQL/lock timeout, .env/Compose Lease 설정, API heartbeatAt/leaseExpiresAt 추가
+
+## 실제 검증 기록
+- Windows pytest **70 passed**, Ruff 통과. 프런트 **4 passed**, strict TypeScript·production build 통과. UI 레이아웃 변경 없음.
+- 최종 Linux API 이미지 pytest **70 passed**, 기존 TestClient deprecation warning 1건. PostgreSQL 0004 migration 및 `alembic check` 통과.
+- Compose `up -d --build --wait` exit 0. 실제 제품 API/Worker/Dispatcher를 새 버전으로 교체했다.
+- 별도 실제 Celery 프로세스+PostgreSQL+Redis: 인코딩 중 SIGKILL, 파일 이동 직후/DB 커밋 전 SIGKILL, SIGSTOP 후 교체 Worker 성공 뒤 SIGCONT, 두 Worker에 동일 메시지 12회, 사망한 취소 요청 Worker 회수 전부 통과. 실패/성공 Attempt 2개, Result/SUCCESS 1개와 실제 PDF 다운로드를 검사했다.
+- 정상 Compose prefork Worker 컨테이너 SIGKILL/재시작: **d4dc30b9-0a97-4005-b052-414f9af3c4a2**, 2 Attempt로 성공.
+- Redis 중단 중 HTTP 업로드 접수→Outbox 보존→재기동: **b195f523-3340-4f90-ad71-4b75bab85a2b**, 1 Attempt로 성공.
+- PostgreSQL 35초 중단→만료 Lease 회수→새 실행: **bed13f6a-009c-49f9-8775-e10a1a38ee76**, 2 Attempt로 성공. API·Dispatcher 재시작 후 결과 유지.
+- 위 서비스 장애 harness는 새 테스트 입력만 FIFO로 교체했고 finally에서 파일·서비스를 복원했다. 볼륨/기존 사용자 데이터는 삭제하지 않았다. 원격 GitHub Actions는 정의만 갱신했으며 실행하지 않았다.
+- 최종 재검증: 두 복구 스케줄러 동시 호출·게시 전 다운로드409 포함 Phase 4 실연동 통과. 인코딩 kill **0c6036d3-8f93-4138-ad9f-efb6815c5f92**, 게시 직후 kill **ad7ea982-7300-4fb1-96d2-3072809eefff**, stale owner **fb8b0c49-c8c7-4b3f-9660-604ef8e92ff2**, 두 Worker 중복 메시지 **9fb3709a-3e97-4a16-bf13-c6c6bbdd26ec**, 사망한 취소 Worker **ae221996-b61d-4f94-b890-7465ea401fc7**.
+- 기존 실연동 회귀: Phase 1 smoke **8e1891b9-d12d-4468-bc27-1211f88b26df**, Phase 2 TIFF·옵션·색 순서/권한 **b9e317c0-43d9-49d7-8716-f6522c48e491**, Phase 3 자동·상한·수동/취소 전부 통과(수동 **c0b93f35-a69a-4055-a705-75fdb41dee21**, 실패4회+성공1회 보존).
+- 종료 확인: API/Worker/frontend/PostgreSQL/Redis healthy, Dispatcher 실행, migrate exit 0. `alembic current` 0004(head), `alembic check` 신규 변경 없음, Ruff format/check 및 git diff --check 통과. 현재 실행 차단 요인 없음.
+
+## 발견한 문제와 반영
+1. Lease 검사 시각을 row lock 대기 전에 읽으면 대기 시간이 소유권 판정에 반영되지 않는다. Claim·Heartbeat는 잠금 획득 후 DB 시각을 읽도록 했다. 최종 게시도 같은 Job 잠금 안에서 검사한다.
+2. 단순 `acks_late`만으로 DB의 PROCESSING이나 유실 메시지를 복구할 수 없다. 만료 Lease 회수와 미획득 QUEUED 재발행을 독립적으로 구현했다.
+3. 초기 실연동 harness는 /tmp 실행 시 app 모듈 경로가 없어 시작하지 못했다. 명시적 PYTHONPATH=/app로 수정했다. Compose harness의 오래된 HTTP 연결 재사용 오류는 매 요청 새 연결로 수정 후 전체 재검증했다. 이 실패를 제품 복구 성공으로 집계하지 않았다.
+
+## 변경 파일
+- 신규: backend/alembic/versions/0004_leases.py, app/services/leases.py·recovery.py, tests/test_phase4.py
+- Backend: core/config.py·db.py, models/job.py, services/lifecycle.py·dispatcher.py·errors.py·jobs.py, tasks/convert.py, main.py, tests/test_migration.py
+- 실연동: scripts/smoke_phase4.py·smoke_phase4_compose.py, .github/workflows/ci.yml
+- 설정/문서: .env.example, docker-compose.yml, README, docs/PROGRESS·DECISIONS·API·ARCHITECTURE·TEST-SCENARIOS
+
+## 제한과 다음 작업
+Phase 5에서 실제 Worker/큐/오류 지표·관측과 성능 측정을 진행한다. 이번에는 가짜 수치나 모니터링 UI를 추가하지 않았다.
+
+Lease는 프로세스가 죽었다고 증명하지 않는다. 만료 후 이전 네이티브 변환이 잠시 겹칠 수 있지만 결과 반영을 차단한다. DB·공유 스토리지·Dispatcher가 복구되어야 재개한다. DB/파일시스템의 원자 커밋, orphan/임시 파일 자동 청소, 파일 수명 정책은 미구현이다. 결과 이동 직후 crash의 이전 Attempt 파일은 비공개 orphan으로 남을 수 있다. 장애 무한 자동 재시도는 하지 않는다.
+
+구버전 Worker는 Lease를 모르므로 배포 전 drain/중지하고 함께 교체해야 한다. 계정 인증·요청 Idempotency-Key·할당량·공개 서비스 보안, 로그 형식 통일, TestClient deprecation, 성능 벤치마크도 남아 있다.
+
+2026-10-28 후속 사용자 요청으로 Phase 4 변경을 HeoSeongbin <heosb316@gmail.com> 작성자의 커밋으로 정리하고 origin/main에 게시한다. 검증 결과는 위 실제 실행 기록을 따른다.
+
+---
+
+# Phase 3 기록 (이전 실행)
+
 기준일: 2026-10-27 (Asia/Seoul)
 현재 Phase: **Phase 3 — 실패 처리 및 재시도 완료**.
 다음 우선순위: **Phase 4 — 멱등성 및 Worker 장애 복구**. 이번 작업에서 Lease/강제 종료 복구는 구현하지 않았다.

@@ -1,5 +1,6 @@
 from pathlib import Path
 from pydantic_settings import BaseSettings
+from pydantic import Field, model_validator
 
 
 class Settings(BaseSettings):
@@ -17,6 +18,16 @@ class Settings(BaseSettings):
     max_auto_retries: int = 3
     retry_base_seconds: int = 5
     retry_max_seconds: int = 300
+    lease_seconds: int = Field(default=30, ge=3)
+    heartbeat_seconds: int = Field(default=5, ge=1)
+    redispatch_seconds: int = Field(default=30, ge=3)
+
+    @model_validator(mode="after")
+    def lease_interval(self):
+        if self.heartbeat_seconds * 2 >= self.lease_seconds:
+            raise ValueError("heartbeat_seconds must be less than half lease_seconds")
+        return self
+
     cors_origin: str = "http://localhost:8080"
 
 

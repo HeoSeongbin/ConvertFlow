@@ -1,4 +1,4 @@
-# 시스템 아키텍처 — Phase 3
+# 시스템 아키텍처 — Phase 4
 ```mermaid
 flowchart LR
   Browser[React 업로드 / 작업 목록 / 상세] --> Nginx
@@ -16,8 +16,8 @@ flowchart LR
 1. 브라우저가 다중 파일의 순서와 검증된 형식의 options JSON을 multipart로 전송한다.
 2. API가 UUID 경로에 저장하면서 개별/전체 크기를 제한하고, 모든 프레임을 디코딩해 실제 포맷·MIME·픽셀·페이지 제한을 확인한다.
 3. Job, JobFile(0 기반 sort_order), Outbox, QUEUED 이벤트를 같은 DB 트랜잭션으로 저장한다. 하나라도 실패하면 이번 업로드 파일을 정리한다.
-4. Dispatcher는 미발행 Outbox를 잠그고 UUID만 Redis에 발행한다. 발행 후 DB commit 실패에 따른 중복 전달을 허용한다.
-5. Worker는 QUEUED→PROCESSING 조건부 Claim에 성공한 경우만 실행한다. 원본 해시와 페이지 정보를 다시 검증한다.
+4. Dispatcher는 만료 Lease/미획득 메시지를 회수하고 미발행 Outbox의 UUID·실행 세대를 Redis에 발행한다. 발행 후 DB commit 실패에 따른 중복 전달을 허용한다.
+5. Worker는 같은 세대 QUEUED→PROCESSING 조건부 Claim에 성공한 경우만 실행한다. Attempt·Lease를 설정하고 독립 Heartbeat를 시작한다. 원본 해시와 페이지 정보를 다시 검증한다.
 6. 파일 순서대로 TIFF 프레임을 확장한다. EXIF 방향·alpha 합성 후 Pillow PDF 페이지를 인코딩하고 pypdf로 크기·여백·fit을 적용한다. 디코딩한 전체 이미지 목록을 메모리에 쌓지 않는다. 인코딩된 PDF 객체는 Writer가 보관하므로 완전한 streaming 변환은 아니다.
 7. 페이지 완료마다 Job 진행률과 PAGE_PROCESSED 이벤트를 한 트랜잭션으로 기록한다. 최종 페이지 수·PDF 파싱 검증 후 결과를 원자 이동한다.
 8. Job row lock을 유지하며 Result(고유 job_id), SUCCESS 상태, 완료 이벤트를 같은 트랜잭션으로 확정한다. 실패 시 현재 진행 수를 남기고 FAILED 이벤트를 추가하며 부분 PDF를 다운로드하지 않는다.
@@ -34,7 +34,7 @@ erDiagram
   conversion_attempt ||--o| conversion_result : publishes
   conversion_job ||--o{ conversion_event : records
 ```
-Job: UUID, workspace/access 해시, 상태, 단계, options JSON, 전체/완료 파일·페이지 수, UTC 시간, 오류 코드·메시지, run_generation, active_attempt_id, attempt_count, auto_retry_count, next_retry_at.
+Job: UUID, workspace/access 해시, 상태, 단계, options JSON, 전체/완료 파일·페이지 수, UTC 시간, 오류 코드·메시지, run_generation, active_attempt_id, attempt_count, auto_retry_count, next_retry_at, heartbeat_at, lease_expires_at(index).
 Attempt: UUID, Job FK, (job_id,attempt_number) 및 (job_id,generation) 고유 제약, origin·Worker·상태·시작/종료·오류·retryable. Result와 Event는 해당 Attempt FK로 귀속한다. Outbox는 (job_id,generation) 고유 제약과 available_at 시각을 갖는다.
 JobFile: UUID, FK, 파일명, UUID 저장 경로, 크기·MIME·페이지·SHA256, sort_order. (job_id,sort_order) 고유 제약.
 Result: UUID, 고유 Job FK, 경로·크기·SHA256·페이지 수·UTC 시간.
@@ -57,12 +57,12 @@ Job의 workspace_hash+created_at 복합 인덱스와 상태/각 FK 조회 인덱
 
 취소는 DB 상태 변경이며 프로세스를 강제 종료하지 않는다. Worker가 입력 파일·페이지 경계와 최종 게시 전에 취소를 확인하고 Attempt 종료와 CANCELLED 이벤트를 함께 기록한다. 게시 직전 Job row lock으로 취소/성공 확정을 직렬화한다. 취소 요청이 먼저 확정되면 결과를 공개하지 않고, SUCCESS가 먼저 커밋되면 뒤의 취소 요청은 409다.
 
-Lease 만료·Worker 재획득은 아직 없다. 실행 세대 검증을 Lease 기반 장애 복구 보장으로 표현하지 않는다. PROCESSING/CANCEL_REQUESTED 중 Worker가 죽으면 자동 복구하지 않는다. DB와 파일 이동 사이 원자성도 없으며 orphan 결과 정리·강제 종료 테스트는 Phase 4다.
+Phase 4는 Job의 heartbeat_at/lease_expires_at을 DB 시각으로 관리한다. Claim과 Heartbeat는 row lock 획득 후 시각을 읽는다. 별도 Heartbeat thread가 인코딩 중에도 갱신하며 모든 진행/게시/실패는 미만료 Lease+세대+Attempt 소유권을 확인한다. Dispatcher는 SKIP LOCKED로 만료 실행을 회수하고 이전 Attempt 오류·새 세대 Outbox를 함께 커밋한다. 취소 요청은 재실행하지 않는다. 아직 Claim되지 않은 발행 메시지는 30초 후 재발행한다. 오래된 프로세스의 CPU 연산 자체를 막지는 않지만 결과 확정은 차단한다. DB/파일시스템 원자 커밋과 orphan 자동 정리는 없다.
 
 공유 저장소는 uploads/{job}/UUID, processing/{job}/{execution UUID}/output.pdf, results/{job}/{attempt UUID}.pdf 구조다. 실행별 임시 경로와 전체 결과 검증을 유지한다. 자동 만료·용량 정리는 미구현이다. Redis/DB/Worker 모니터링 수치를 임의로 만들지 않는다.
 
 
 ## 이전 데이터 및 테스트 경계
-0003은 기존 성공/실패/실행 중 Job을 LEGACY Attempt 하나로 보존하고 결과에 연결한다. 과거 Worker나 누락된 시간을 추정하지 않는다. 기존 이벤트는 원문을 유지하며 과거 Attempt 귀속을 임의로 채우지 않는다. 재시도/취소 적용 전 구버전 API/Worker의 작업을 마치고 함께 교체해야 한다. 실행 중 강제 교체 후 복구는 Phase 4 범위다.
+0003은 기존 성공/실패/실행 중 Job을 LEGACY Attempt 하나로 보존하고 결과에 연결한다. 과거 Worker나 누락된 시간을 추정하지 않는다. 기존 이벤트는 원문을 유지하며 과거 Attempt 귀속을 임의로 채우지 않는다. 0004는 기존 데이터에 nullable Lease 컬럼만 추가한다. 구버전 Worker는 fencing을 모르므로 배포 전에 drain/중지하고 함께 교체해야 한다. Phase 4 Worker의 비정상 종료와 재시작 복구는 지원한다.
 
 제품의 변환은 별도 Celery Worker가 수행한다. 장애 주입 테스트에서만 API 컨테이너의 별도 테스트 프로세스에 Celery solo test worker와 전용 큐를 사용하며 실제 Redis/PostgreSQL에 연결한다. 이때 일반 Dispatcher는 중지 후 반드시 복원한다. 테스트용 monkeypatch는 제품 API나 운영 플래그에 노출하지 않는다.

@@ -53,6 +53,8 @@ def serialize(job, db=None):
         "jobId": job.job_id,
         "runGeneration": job.run_generation,
         "attemptCount": job.attempt_count,
+        "heartbeatAt": iso(job.heartbeat_at),
+        "leaseExpiresAt": iso(job.lease_expires_at),
         "autoRetryCount": job.auto_retry_count,
         "nextRetryAt": iso(job.next_retry_at),
         "canRetry": job.status == "FAILED" and job.error_code in MANUAL_RETRY_CODES,

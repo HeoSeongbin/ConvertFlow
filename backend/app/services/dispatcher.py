@@ -6,6 +6,7 @@ from app.models.job import Outbox, Job, now
 from app.services.lifecycle import lock_job
 from app.services.events import record_event
 from app.tasks.celery_app import celery_app
+from app.services.recovery import recover_once
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ def dispatch_once():
 if __name__ == "__main__":
     while True:
         try:
+            recover_once()
             dispatch_once()
         except Exception:
             logger.exception("dispatcher_failed")

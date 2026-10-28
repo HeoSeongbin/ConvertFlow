@@ -1,4 +1,4 @@
-# Phase 3 API 계약
+# Phase 4 API 계약
 기본 경로 `/api/v1`, OpenAPI `/openapi.json`, Swagger `/docs`. 기존 단일 파일 multipart와 X-Job-Token을 유지한다.
 
 ## 업로드
@@ -64,6 +64,8 @@ Job 추가 필드: runGeneration,attemptCount,autoRetryCount,nextRetryAt,canRetr
 
 retryable은 해당 실패의 **자동** 재시도 정책을 기록한 값이다. 권한 오류 등은 운영자 조치 후 수동 재시도만 허용될 수 있다. 0003 이전 기록은 LEGACY이며 알 수 없는 시각은 null, Worker는 UNKNOWN이다. 대기 중 취소하여 Worker가 실행하지 않은 작업에는 Attempt를 만들지 않는다.
 
-자동 재시도 상태: PROCESSING→RETRY_WAIT→QUEUED→PROCESSING. transient 저장소 오류·RESOURCE_EXHAUSTED·TIME_LIMIT_EXCEEDED를 최대 3회 예약하며 마지막 실패는 FAILED다. 예약은 DB/Outbox에 영속화하고 오류·Attempt를 유지한다. 원본 누락은 SOURCE_MISSING으로 분류하고 자동 반복하지 않는다. Soft time limit만 처리하며 hard kill 복구는 아직 없다.
+자동 재시도 상태: PROCESSING→RETRY_WAIT→QUEUED→PROCESSING. transient 저장소 오류·RESOURCE_EXHAUSTED·TIME_LIMIT_EXCEEDED·WORKER_LEASE_EXPIRED를 최대 3회 예약하며 마지막 실패는 FAILED다. 예약은 DB/Outbox에 영속화하고 오류·Attempt를 유지한다. 원본 누락은 SOURCE_MISSING으로 분류하고 자동 반복하지 않는다. hard kill은 Lease 만료 후 스케줄러가 복구한다.
 
-recovery 및 Idempotency-Key는 Phase 4, monitoring은 Phase 5에서 제공한다. 같은 입력을 새로 업로드하면 별도 Job이며 기존 Job의 재시도와 구분한다.
+Phase 4의 Job 목록/상세에 `heartbeatAt`, `leaseExpiresAt`(UTC ISO 또는 null)을 추가했다. 완료 시 Lease는 null, 마지막 Heartbeat는 이력으로 남긴다. 복구 시 `RECOVERY_REQUIRED` 이벤트, 이전 Attempt의 `WORKER_LEASE_EXPIRED`, `RETRY_SCHEDULED`를 보존한다. 취소 요청 중 만료되면 새 Attempt 없이 CANCELLED로 확정한다. RECOVERY_REQUIRED는 이번 자동 회수의 이벤트이며 별도 API 조작이 필요한 장기 상태로 노출하지 않는다.
+
+Idempotency-Key는 미구현이며 같은 입력을 새로 업로드하면 별도 Job이다. monitoring은 Phase 5 범위다.

@@ -43,6 +43,10 @@ class Job(Base):
     run_generation: Mapped[int] = mapped_column(Integer, default=1)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     active_attempt_id: Mapped[str | None] = mapped_column(String(36))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
     auto_retry_count: Mapped[int] = mapped_column(Integer, default=0)
     next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     retry_origin: Mapped[str] = mapped_column(String(16), default="INITIAL")

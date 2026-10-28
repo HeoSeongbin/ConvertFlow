@@ -5,6 +5,9 @@ x-backend: &backend
     DATABASE_URL: postgresql+psycopg://convertflow:${POSTGRES_PASSWORD:-convertflow}@postgres/convertflow
     REDIS_URL: redis://redis:6379/0
     STORAGE_ROOT: /data
+    LEASE_SECONDS: ${LEASE_SECONDS:-30}
+    HEARTBEAT_SECONDS: ${HEARTBEAT_SECONDS:-5}
+    REDISPATCH_SECONDS: ${REDISPATCH_SECONDS:-30}
   volumes:
     - storage:/data
   restart: unless-stopped

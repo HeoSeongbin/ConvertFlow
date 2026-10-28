@@ -46,6 +46,15 @@ def test_phase1_database_upgrade_preserves_existing_jobs(tmp_path):
             )
     migrate("head")
     with engine.connect() as db:
+        assert (
+            db.scalar(
+                text(
+                    "SELECT COUNT(*) FROM conversion_job WHERE lease_expires_at IS NOT NULL OR heartbeat_at IS NOT NULL"
+                )
+            )
+            == 0
+        )
+    with engine.connect() as db:
         assert db.scalar(text("SELECT COUNT(*) FROM conversion_job")) == 3
         assert db.scalar(text("SELECT COUNT(*) FROM conversion_job_file")) == 3
         assert db.scalar(text("SELECT COUNT(*) FROM conversion_result")) == 1

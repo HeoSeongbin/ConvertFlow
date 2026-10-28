@@ -7,6 +7,7 @@ from app.models.job import Job, JobFile, Attempt, Outbox, now
 from app.storage.local import storage
 from app.services.events import record_event
 from app.services.errors import MANUAL_RETRY_CODES, Failure, retry_delay
+from app.services.leases import alive, clock
 
 
 class Cancelled(Exception):
@@ -32,6 +33,7 @@ def cancel_locked(db, job, attempt=None):
     job.completed_at = now()
     job.error_code = job.error_message = None
     job.active_attempt_id = None
+    job.lease_expires_at = None
     if attempt:
         attempt.status = "CANCELLED"
         attempt.finished_at = now()
@@ -51,6 +53,7 @@ def guard(db, job_id, generation, attempt_id):
         not job
         or job.run_generation != generation
         or job.active_attempt_id != attempt_id
+        or not alive(job, clock(db))
     ):
         raise StaleExecution()
     if job.status == "CANCEL_REQUESTED":
@@ -74,59 +77,66 @@ def fail_attempt(
             or job.status not in {"PROCESSING", "CANCEL_REQUESTED"}
         ):
             return
-        attempt = db.get(Attempt, attempt_id)
-        if job.status == "CANCEL_REQUESTED":
-            cancel_locked(db, job, attempt)
+        if not alive(job, clock(db)):
             return
-        attempt.status = "FAILED"
-        attempt.finished_at = now()
-        attempt.error_code = failure.code
-        attempt.error_message = failure.message
-        attempt.retryable = failure.retryable
-        job.error_code = failure.code
-        job.error_message = failure.message
-        job.active_attempt_id = None
+        finish_failure(db, job, failure, exception_type, filename)
+
+
+def finish_failure(db, job, failure, exception_type, filename=None):
+    job_id = job.job_id
+    attempt_id = job.active_attempt_id
+    attempt = db.get(Attempt, attempt_id)
+    if job.status == "CANCEL_REQUESTED":
+        cancel_locked(db, job, attempt)
+        return
+    attempt.status = "FAILED"
+    attempt.finished_at = now()
+    attempt.error_code = failure.code
+    attempt.error_message = failure.message
+    attempt.retryable = failure.retryable
+    job.error_code = failure.code
+    job.error_message = failure.message
+    job.active_attempt_id = None
+    job.lease_expires_at = None
+    record_event(
+        db,
+        job_id,
+        "FAILED",
+        failure.message,
+        attempt_id=attempt_id,
+        errorCode=failure.code,
+        exceptionType=exception_type,
+        retryable=failure.retryable,
+        filename=filename,
+    )
+    if failure.retryable and job.auto_retry_count < settings.max_auto_retries:
+        job.auto_retry_count += 1
+        job.run_generation += 1
+        job.retry_origin = "AUTO"
+        job.status = job.stage = "RETRY_WAIT"
+        job.next_retry_at = now() + timedelta(seconds=retry_delay(job.auto_retry_count))
+        job.completed_at = None
+        job.started_at = None
+        db.add(
+            Outbox(
+                job_id=job_id,
+                generation=job.run_generation,
+                available_at=job.next_retry_at,
+            )
+        )
         record_event(
             db,
             job_id,
-            "FAILED",
-            failure.message,
+            "RETRY_SCHEDULED",
+            "일시 오류로 자동 재시도를 예약했습니다.",
             attempt_id=attempt_id,
-            errorCode=failure.code,
-            exceptionType=exception_type,
-            retryable=failure.retryable,
-            filename=filename,
+            retryNumber=job.auto_retry_count,
+            generation=job.run_generation,
+            nextRetryAt=job.next_retry_at.isoformat(),
         )
-        if failure.retryable and job.auto_retry_count < settings.max_auto_retries:
-            job.auto_retry_count += 1
-            job.run_generation += 1
-            job.retry_origin = "AUTO"
-            job.status = job.stage = "RETRY_WAIT"
-            job.next_retry_at = now() + timedelta(
-                seconds=retry_delay(job.auto_retry_count)
-            )
-            job.completed_at = None
-            job.started_at = None
-            db.add(
-                Outbox(
-                    job_id=job_id,
-                    generation=job.run_generation,
-                    available_at=job.next_retry_at,
-                )
-            )
-            record_event(
-                db,
-                job_id,
-                "RETRY_SCHEDULED",
-                "일시 오류로 자동 재시도를 예약했습니다.",
-                attempt_id=attempt_id,
-                retryNumber=job.auto_retry_count,
-                generation=job.run_generation,
-                nextRetryAt=job.next_retry_at.isoformat(),
-            )
-        else:
-            job.status = job.stage = "FAILED"
-            job.completed_at = now()
+    else:
+        job.status = job.stage = "FAILED"
+        job.completed_at = now()
 
 
 def request_retry(db, job_id, expected_generation: int):

@@ -84,3 +84,15 @@ Celery retry/ETA 대신 실패 Attempt 종료, RETRY_WAIT, 다음 세대 Outbox�
 ## ADR-026 장애 주입 테스트 경계 — 채택
 일반 Dispatcher를 잠시 멈추고 전용 큐의 Celery embedded solo test worker를 API 컨테이너의 별도 프로세스에서 기동한다. 실제 Redis/PostgreSQL을 사용하며, 제품 Worker 코드를 실행하되 해당 테스트 프로세스에만 transient 저장소 오류·게시 직전 정지를 주입한다. 제품 API에 오류 주입 옵션을 추가하지 않는다. 종료 시 Dispatcher를 반드시 재기동한다. 별도로 실제 Compose prefork Worker + 브라우저에서도 테스트 Job의 저장소 권한 오류 후 원상복구·수동 재시도와 대기 취소를 검증했다. 이는 Worker kill/다중 Worker Lease 검증이 아니다.
 참고: [Celery 5.5.2 test worker](https://docs.celeryq.dev/en/v5.5.2/reference/celery.contrib.testing.worker.html).
+
+## ADR-027 Phase 4 실행 Lease와 DB 시각 — 채택
+Job에 heartbeat_at/lease_expires_at을 추가하고 Claim 트랜잭션에서 설정한다. 기본 Lease 30초, 별도 daemon thread의 Heartbeat 5초이며 페이지 callback이 없는 긴 인코딩 중에도 갱신한다. PostgreSQL clock_timestamp()를 row lock 획득 뒤 읽어 호스트 시각 차이나 잠금 대기 이전 시각으로 소유권을 연장하지 않는다. 만료된 Lease는 스케줄러가 아직 회수하지 않았어도 갱신·진행·실패·취소 완료·결과 게시를 거부한다. 세대+Attempt UUID가 fencing token이다. Lease 만료는 프로세스 사망을 단정하지 않으며, 늦게 돌아온 프로세스는 다음 경계에서 결과를 버린다. 진행 중 CPU 작업 자체를 중복 실행하지 않는 exactly-once 보장은 없으며 DB 결과 확정만 한 번으로 제한한다.
+
+## ADR-028 복구와 재발행의 영속성 — 채택
+기존 Dispatcher가 3초마다 recover_once 후 dispatch_once를 호출한다. SKIP LOCKED로 만료된 PROCESSING/CANCEL_REQUESTED를 최대 20개 회수한다. RECOVERY_REQUIRED 이벤트와 실패 Attempt(WORKER_LEASE_EXPIRED), 기존 자동 재시도 정책의 다음 세대·Outbox를 같은 트랜잭션에 저장한다. 별도 미완료 상태로 장기간 방치하지 않으며 상한 3회 후 FAILED, 수동 재시도는 기존 권한·원본 검사를 따른다. 취소 중 만료는 새 실행 없이 CANCELLED로 확정한다. QUEUED인데 발행 후 30초 동안 Claim되지 않은 세대는 Outbox를 재발행 가능하게 돌려 broker 유실에도 복구한다. 큐 적체 때 중복 메시지가 생길 수 있지만 원자 Claim이 추가 Attempt를 차단한다. 장기 적체의 재발행 빈도 조정·메트릭은 Phase 5 과제다.
+
+## ADR-029 장애 경계와 마이그레이션 — 채택
+DB 연결 3초, SQL 5초, lock wait 3초 제한으로 장애 중 무한 대기를 줄인다. DB가 없으면 소유권 검사가 실패하며 최종 상태를 추측해 쓰지 않는다. DB 복귀 후 만료 Lease를 회수한다. 0004는 기존 Job/Attempt/Event/Result를 보존하고 기존 실행 Lease는 NULL로 둔다. 구버전 Worker는 Lease 검사를 하지 않으므로 배포 전에 반드시 drain/중지하고 API·Worker·Dispatcher를 함께 갱신한다. 실행 중 구버전/신버전 혼합 배포를 지원하지 않는다. DB/파일시스템의 원자 커밋은 없으며 이동 직후 crash의 이전 Attempt PDF는 비공개 orphan으로 남을 수 있다. 새 Attempt 경로로 재생성하고 Result의 Job 고유 제약과 fenced row lock 안의 SUCCESS 이벤트로 중복 게시를 방지한다. orphan 보관·청소는 후속 파일 수명 정책에서 다룬다.
+
+## ADR-030 실제 프로세스 장애 검증 — 채택
+전용 Redis 큐에 별도 Celery solo 프로세스를 기동하고 테스트 프로세스만 converter/파일 이동을 gate한다. SIGKILL, SIGSTOP/SIGCONT, 두 Worker에 같은 세대 12회 전달을 실제 PostgreSQL과 Redis로 검증한다. 정상 제품 설정에 fault flag는 추가하지 않는다. 정상 Compose prefork Worker는 별도 호스트 harness에서 새 테스트 입력을 FIFO로 잠깐 교체해 입력 읽기에 정지시키고 컨테이너 SIGKILL/DB 장애를 재현한다. 각 harness는 프로세스·서비스를 finally로 복원하며 볼륨을 삭제하지 않는다. 이는 localhost 전용의 서비스 중단을 포함한 개발 검증 도구다.

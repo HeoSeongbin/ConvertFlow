@@ -1,7 +1,7 @@
 # ConvertFlow
-이미지 업로드 요청과 PDF 변환을 분리하는 비동기 문서 처리 플랫폼입니다. **Phase 3 — 실패 처리 및 재시도**까지 구현하고 Docker에서 검증했습니다.
+이미지 업로드 요청과 PDF 변환을 분리하는 비동기 문서 처리 플랫폼입니다. **Phase 4 — 멱등성 및 Worker 장애 복구**를 구현했습니다. 실제 실행 결과는 [진행 현황](docs/PROGRESS.md)에 기록합니다.
 
-React → FastAPI → PostgreSQL Outbox → Dispatcher → Redis → Linux Celery Worker → 공유 스토리지로 처리합니다. DB를 상태의 기준으로 사용하고 큐에는 Job UUID만 전달합니다.
+React → FastAPI → PostgreSQL Outbox → Dispatcher → Redis → Linux Celery Worker → 공유 스토리지로 처리합니다. DB를 상태의 기준으로 사용하고 큐에는 Job UUID와 실행 세대만 전달합니다.
 
 ## 구현 기능
 - PNG/JPEG/BMP/WEBP/TIFF 다중 업로드와 파일별 검증·제거·순서 변경
@@ -14,6 +14,8 @@ React → FastAPI → PostgreSQL Outbox → Dispatcher → Redis → Linux Celer
 - 일시 오류 자동 재시도: 최대 3회, 지수 backoff + jitter, DB 기반 실행 예약
 - Retry Center의 실패 작업 조회·수동 재처리·불가 사유 표시
 - 대기/재시도 대기 즉시 취소, 실행 중 협조적 취소와 결과 게시 차단
+- DB 시각 기반 Lease·독립 Heartbeat, 만료 실행 회수·새 Attempt 복구·오래된 Worker fencing
+- 미획득 메시지 재발행, Worker 중단·재시작 및 DB/Redis 복귀 후 작업 재개
 - 한국어 UI, Light/Dark 모드, 반응형 레이아웃
 
 ## 실행
@@ -34,7 +36,12 @@ docker compose ps
 
 최대 횟수 초과나 일반 변환 실패는 Retry Center에서 원인을 확인한 후 **같은 파일로 재시도**할 수 있습니다. 원본·옵션·Job ID를 유지하고 새 Attempt를 추가하며 이전 오류를 지우지 않습니다. 수동 재시도는 자동 재시도 주기를 새로 시작합니다. 손상된 입력·미지원 형식·잘못된 옵션은 같은 입력으로 재시도하지 않습니다. 원본이 없거나 변경되면 요청을 거부합니다. 권한 오류는 자동 반복하지 않으며 운영자가 권한을 복구한 뒤 수동 재시도할 수 있습니다.
 
-**작업 취소**를 누르면 QUEUED/RETRY_WAIT는 즉시 CANCELLED, PROCESSING은 CANCEL_REQUESTED가 됩니다. Worker는 입력 파일/페이지 처리 경계와 결과 게시 직전 취소를 확인합니다. 이미지 디코딩·인코딩을 즉시 강제 종료하지는 않습니다. 취소가 확정되면 결과를 다운로드할 수 없습니다. 이미 SUCCESS로 확정된 작업은 취소할 수 없습니다. 취소를 실제로 완료한 Worker가 없으면 CANCEL_REQUESTED를 임의로 완료 처리하지 않습니다.
+**작업 취소**를 누르면 QUEUED/RETRY_WAIT는 즉시 CANCELLED, PROCESSING은 CANCEL_REQUESTED가 됩니다. Worker는 입력 파일/페이지 처리 경계와 결과 게시 직전 취소를 확인합니다. 이미지 디코딩·인코딩을 즉시 강제 종료하지는 않습니다. 취소가 확정되면 결과를 다운로드할 수 없습니다. 이미 SUCCESS로 확정된 작업은 취소할 수 없습니다. Worker가 사라진 취소 요청은 Lease 만료 후 스케줄러가 소유권을 회수하고 CANCELLED로 확정합니다.
+
+## Worker 장애 복구
+기본 Lease는 30초, 독립 Heartbeat는 5초입니다. `LEASE_SECONDS`, `HEARTBEAT_SECONDS`, `REDISPATCH_SECONDS`를 `.env`에서 조정할 수 있으며 Heartbeat 간격은 Lease의 절반 미만이어야 합니다. Dispatcher는 3초마다 만료 소유권을 회수하고 `WORKER_LEASE_EXPIRED` 오류를 이전 Attempt에 보존합니다. 기존 자동 재시도 상한과 backoff를 적용해 새 세대를 예약합니다. DB가 없으면 상태 변경을 중단하고 DB 복귀 후 회수합니다. 발행됐지만 30초 동안 Claim되지 않은 메시지도 재발행합니다.
+
+오래된 Worker는 Lease·세대·Attempt 검사를 통과해야 진행/결과를 반영할 수 있습니다. 긴 네이티브 연산이 겹쳐 실행될 수 있지만 최종 Result와 완료 이벤트는 하나입니다. 파일 이동 직후 DB 커밋 전에 죽으면 이전 Attempt의 비공개 orphan PDF가 남을 수 있습니다. 자동 청소는 아직 없습니다. 배포 시 구버전 Worker를 drain/중지하고 API·Worker·Dispatcher를 함께 교체하세요.
 
 ## 작업공간 및 기존 데이터
 첫 정상 업로드에서 30일 HttpOnly/SameSite=Lax 쿠키로 로컬 브라우저 작업공간을 만듭니다. 서버는 해시만 저장하고 목록·상세·다운로드를 해당 작업공간으로 제한합니다. 기존 `X-Job-Token` 단일 작업 접근 방식도 유지합니다. 쿠키를 삭제하면 목록 접근 권한이 사라집니다. 이는 사용자 계정 인증을 대신하지 않으며 공개 서비스용이 아닙니다.
@@ -63,14 +70,14 @@ python scripts/smoke_phase2.py
 docker compose exec -T api alembic check
 docker compose logs -f api worker dispatcher
 ```
-백엔드 **Windows·Linux 각각 64개 테스트**, 프런트 **4개 테스트·타입 검사·빌드**가 통과했습니다. 실제 Redis→Linux Worker로 단일 이미지 및 3페이지 TIFF 병합, 출력 크기·순서, 실패 이벤트, 작업공간 격리를 확인했습니다. 브라우저에서도 순서 변경→A4 가로 변환→다운로드한 PDF 검증과 실패 필터를 확인했습니다. Phase 3에서는 실제 저장소 권한 오류 복구 후 수동 재시도 성공과 실패/성공 Attempt 보존, 대기 작업 취소를 확인했습니다. 별도 격리 테스트 Worker에서 실제 Redis/PostgreSQL을 사용한 자동 재시도·횟수 제한·게시 직전 취소도 검증했습니다. 원격 GitHub Actions는 정의만 갱신했고 실행하지 않았습니다. 자세한 결과는 [진행 현황](docs/PROGRESS.md)을 확인하세요.
+백엔드 **Windows·Linux 각각 70개 테스트**, 프런트 **4개 테스트·타입 검사·빌드**가 통과했습니다. 실제 Redis→Linux Worker로 단일 이미지 및 3페이지 TIFF 병합, 출력 크기·순서, 실패 이벤트, 작업공간 격리를 재검증했습니다. 기존 Phase 3의 자동/수동 재시도·횟수 제한·게시 직전 취소도 통과했습니다. Phase 4는 실제 Celery SIGKILL·SIGSTOP/SIGCONT·두 Worker 중복 메시지·동시 복구 스케줄러, 정상 Compose prefork Worker 컨테이너 강제 종료, Redis 중단·PostgreSQL 35초 중단 후 복구까지 확인했습니다. 브라우저 스크린샷은 Phase 3 당시 검증 기록이며 이번 UI 레이아웃 변경은 없습니다. 원격 GitHub Actions는 정의만 갱신했고 실행하지 않았습니다. 자세한 결과는 [진행 현황](docs/PROGRESS.md)을 확인하세요.
 
 실제 Phase 3 장애 주입 테스트는 일반 Dispatcher를 잠시 중지한 전용 테스트 프로세스에서만 실행합니다. 운영 코드에 오류 주입 플래그는 없습니다. 실행·복원 방법은 [검증 절차](docs/TEST-SCENARIOS.md)를 확인하세요.
 
 ## 설계와 남은 범위
 조건부 DB Claim과 Job별 고유 Result, 상태 갱신과 동일 트랜잭션의 완료 이벤트로 중복 반영을 방지합니다. 임시 PDF를 전체 검증한 뒤 동일 볼륨에서 원자 이동하며 SUCCESS 결과만 다운로드합니다. DB와 파일시스템 사이 원자성을 보장하지는 않습니다.
 
-**다음 Phase 4:** Lease/Heartbeat·fencing을 통한 Worker 재획득, PROCESSING/CANCEL_REQUESTED 복구, Worker 강제 종료·재시작 및 다중 Worker 장애 검증입니다. 현재 실행 세대·Attempt 소유권 검사는 재시도/취소 경합을 보호하지만, Worker가 죽었을 때 실행권한을 자동 재획득하지 않습니다. 자동 만료·청소, 사용자 인증, 모니터링, 성능 벤치마크도 아직 없습니다.
+**다음 Phase 5:** Worker·큐·작업 상태 모니터링 및 성능 측정입니다. 자동 파일 만료·청소, 사용자 계정 인증, 요청 Idempotency-Key, 성능 벤치마크는 아직 없습니다. 파일을 새로 업로드하면 별도 Job입니다. 장애 시 즉시 복구를 보장하지 않으며 DB·스토리지가 사용 가능하고 Dispatcher가 돌아야 합니다.
 
 ```bash
 docker compose down  # 종료, 볼륨 데이터 보존

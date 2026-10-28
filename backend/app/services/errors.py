@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.services.validation import InvalidInput
 
 MANUAL_RETRY_CODES = {
+    "WORKER_LEASE_EXPIRED",
     "STORAGE_ERROR",
     "TIME_LIMIT_EXCEEDED",
     "RESOURCE_EXHAUSTED",

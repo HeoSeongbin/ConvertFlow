@@ -2,6 +2,7 @@ import hashlib
 import logging
 import os
 import socket
+from datetime import timedelta
 from uuid import uuid4
 from celery import current_task
 from sqlalchemy import update, select
@@ -14,6 +15,8 @@ from app.schemas.options import ConversionOptions
 from app.services.validation import InvalidInput, validate_image
 from app.services.events import record_event
 from app.services.errors import classify_error, Failure
+from app.core.config import settings
+from app.services.leases import Heartbeat, clock, alive
 from app.services.lifecycle import (
     guard,
     lock_job,
@@ -30,6 +33,8 @@ logger = logging.getLogger(__name__)
 def convert_job(job_id: str, generation: int = 1):
     attempt_id = str(uuid4())
     with Session.begin() as db:
+        lock_job(db, job_id)
+        instant = clock(db)
         claimed = db.execute(
             update(Job)
             .where(
@@ -49,6 +54,8 @@ def convert_job(job_id: str, generation: int = 1):
                 error_message=None,
                 attempt_count=Job.attempt_count + 1,
                 active_attempt_id=attempt_id,
+                heartbeat_at=instant,
+                lease_expires_at=instant + timedelta(seconds=settings.lease_seconds),
             )
         ).rowcount
         if not claimed:
@@ -81,6 +88,8 @@ def convert_job(job_id: str, generation: int = 1):
         )
     temporary = None
     current_file = None
+    heartbeat = Heartbeat(job_id, generation, attempt_id)
+    heartbeat.start()
     try:
         temporary = storage.path(f"processing/{job_id}/{attempt_id}/output.pdf")
         with Session.begin() as db:
@@ -181,6 +190,7 @@ def convert_job(job_id: str, generation: int = 1):
             job.processed_pages = page_count
             job.completed_at = now()
             job.active_attempt_id = None
+            job.lease_expires_at = None
             job.next_retry_at = None
             job.output_path = relative
             job.output_size = size
@@ -202,6 +212,7 @@ def convert_job(job_id: str, generation: int = 1):
                 and job.run_generation == generation
                 and job.active_attempt_id == attempt_id
                 and job.status == "CANCEL_REQUESTED"
+                and alive(job, clock(db))
             ):
                 cancel_locked(db, job, db.get(Attempt, attempt_id))
     except StaleExecution:
@@ -217,5 +228,6 @@ def convert_job(job_id: str, generation: int = 1):
             job_id, generation, attempt_id, failure, type(exc).__name__, current_file
         )
     finally:
+        heartbeat.stop()
         if temporary:
             temporary.unlink(missing_ok=True)
