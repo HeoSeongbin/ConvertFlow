@@ -21,6 +21,21 @@ x-backend: &backend
     migrate:
       condition: service_completed_successfully
 services:
+  e2e:
+    profiles: [test]
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.e2e
+    environment:
+      E2E_BASE_URL: http://localhost
+      CI: 'true'
+    network_mode: service:frontend
+    volumes:
+      - ./frontend/test-results:/tests/test-results
+      - ./frontend/playwright-report:/tests/playwright-report
+    depends_on:
+      frontend:
+        condition: service_healthy
   postgres:
     image: postgres:16.9-alpine
     environment:

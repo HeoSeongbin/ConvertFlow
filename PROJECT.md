@@ -1370,36 +1370,38 @@ API, DB, Redis, Worker의 준비 상태를 검증한다.
 
 ## 25. 최종 완료 조건
 
-- [ ] 파일 업로드
-- [ ] 파일 형식 검증
-- [ ] FastAPI 요청 접수
-- [ ] UUID Job 생성
-- [ ] Redis Queue 발행
-- [ ] Celery Worker 실행
-- [ ] 이미지 → PDF 변환
-- [ ] 다중 파일 변환
-- [ ] 다중 페이지 TIFF 처리
-- [ ] 상태 조회
-- [ ] 진행률 조회
-- [ ] 결과 다운로드
-- [ ] 실패 원인 기록
-- [ ] 작업 이력 관리
-- [ ] 자동 재시도
-- [ ] 수동 재처리
-- [ ] 작업 취소 처리
-- [ ] 중복 Job 처리 방지
-- [ ] Worker 장애 복구
-- [ ] 다중 Worker 실행
-- [ ] Worker 상태 모니터링
-- [ ] 작업 대시보드
-- [ ] PostgreSQL 영속화
-- [ ] Docker Compose 실행
-- [ ] 자동화 테스트
-- [ ] README 문서화
-- [ ] PROJECT.md 관리
-- [ ] AGENTS.md 관리
-- [ ] PROGRESS.md 최신화
-- [ ] DECISIONS.md 기록
+2026-10-29 Phase 7 로컬 검증 기준. 근거와 한계는 docs/PROGRESS.md 및 docs/validation/phase7.json을 따른다. 중복 방지는 같은 Job의 실행/결과 반영 기준이며 업로드 요청 Idempotency-Key는 미구현이다. 새 Compose 프로젝트/빈 볼륨에서 검증했으며 원격 CI·공개 운영 인증·실제 모바일 기기 검증은 포함하지 않는다.
+
+- [x] 파일 업로드
+- [x] 파일 형식 검증
+- [x] FastAPI 요청 접수
+- [x] UUID Job 생성
+- [x] Redis Queue 발행
+- [x] Celery Worker 실행
+- [x] 이미지 → PDF 변환
+- [x] 다중 파일 변환
+- [x] 다중 페이지 TIFF 처리
+- [x] 상태 조회
+- [x] 진행률 조회
+- [x] 결과 다운로드
+- [x] 실패 원인 기록
+- [x] 작업 이력 관리
+- [x] 자동 재시도
+- [x] 수동 재처리
+- [x] 작업 취소 처리
+- [x] 중복 Job 처리 방지
+- [x] Worker 장애 복구
+- [x] 다중 Worker 실행
+- [x] Worker 상태 모니터링
+- [x] 작업 대시보드
+- [x] PostgreSQL 영속화
+- [x] Docker Compose 실행
+- [x] 자동화 테스트
+- [x] README 문서화
+- [x] PROJECT.md 관리
+- [x] AGENTS.md 관리
+- [x] PROGRESS.md 최신화
+- [x] DECISIONS.md 기록
 
 ---
 

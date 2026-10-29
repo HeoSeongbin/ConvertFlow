@@ -166,3 +166,16 @@ python scripts/smoke_phase6.py
 8. 실제 32페이지 UI Job에서 최신 30개→더 보기→36개 이벤트. 오류 필터는 불러온 8개에서 FAILED+MANUAL_RETRY_REQUESTED 2개를 표시.
 
 페이지 Canvas 크기/DPR 자원 제한, 진행 상태별 안내, 빈 파일, 취소 시간, binary response 오류 메시지는 Vitest로 검증한다. 모바일 iframe과 임시 asset fault는 검증 환경에만 사용하고 제품에 파일/flag를 남기지 않는다. 스크린샷 phase6-*를 증거로 보존한다. 정식 Playwright runner·cross-browser matrix는 Phase 7 범위다.
+
+## Phase 7 자동 E2E 및 새 환경 검증
+
+`python scripts/validate_phase7.py --faults`를 활성 작업이 없는 localhost Compose에서 실행한다. 실행·프로젝트 분리·복원 절차는 [RUNBOOK](RUNBOOK.md)을 따른다. 기존 Phase 1/2/6 API smoke와 Alembic check, 세 브라우저 E2E, Worker 중지 중 @queued 취소, Phase 3 재시도/취소 및 Phase 4 실제 강제 종료/오래된 소유자 fencing·Compose 장애를 순차 실행한다.
+
+브라우저별 5개 시나리오:
+1. TIFF+PNG 순서 변경·A4 가로/여백→실제 PDF 3페이지 색상/경계/다운로드, 신규 workspace 404, UUID 이력 검색, 화면 수평 overflow 없음
+2. 빈 파일 사전 차단 및 위장 PNG의 실제 API 422
+3. 작은 원본과 과도한 여백의 실제 변환 실패, 오류 Attempt 보존·PDF 미공개
+4. 다운로드 네트워크 차단→미리보기 오류→차단 해제/재조회 렌더링 복귀, 테마/선택 작업 reload 보존
+5. Worker 중지 중 대기 취소, 진행률 0/Attempt 없음/PDF 없음
+
+기본 suite 12개(4×3), 별도 queued 3개(1×3)이며 retries=0이다. Chrome/Firefox desktop와 mobile-WebKit 엔진 에뮬레이션을 사용한다. 실제 모바일 기기·Safari 지원 또는 장기 부하 검증으로 확대하지 않는다. HTML/JSON·실패 trace/스크린샷은 Git 제외 디렉터리에, 공유 가능한 실행 요약만 docs/validation에 보존한다. Windows Firefox spawn UNKNOWN은 Linux 공식 컨테이너로 검증한다. 원격 GitHub Actions 성공은 실제 실행 확인 전 주장하지 않는다.

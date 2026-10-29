@@ -10,3 +10,5 @@ dist/
 *.db
 .storage/
 artifacts/
+frontend/test-results/
+frontend/playwright-report/

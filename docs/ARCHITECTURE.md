@@ -1,4 +1,4 @@
-# 시스템 아키텍처 — Phase 6
+# 시스템 아키텍처 — Phase 7
 ```mermaid
 flowchart LR
   Browser[React 업로드 / 작업 목록 / 상세] --> Nginx
@@ -82,3 +82,6 @@ JobDetail, EventTimeline, HistoryCards, UploadList, PDFPreview를 분리한다. 
 PDFPreview는 기존 download 권한 검사를 통과한 결과를 ArrayBuffer로 받아 로컬 PDF.js Web Worker와 Canvas로 표시한다. PDF 렌더링은 브라우저만 수행하며 원본 PDF는 바뀌지 않는다. 32 MiB 크기와 페이지 Canvas 자원을 제한하고 선택/닫기/해제 시 요청·render·document를 정리한다. PDF 엔진/Worker는 외부 CDN이 아니라 같은 Nginx의 Vite asset이다. 실패 시 콘솔을 유지하고 다운로드 안내를 제공한다.
 
 이벤트는 최신 30개 + before 커서로 더 읽는다. 기본 after 계약은 보존하며 상태 종료 때 최종 이벤트를 재조회한다. 모바일은 카드·화면 선택 메뉴를, 데스크톱은 테이블·고정 내비게이션을 사용한다. 테마 저장과 선택 Job focus는 클라이언트의 UI 상태이고 업무 상태를 대체하지 않는다.
+
+## Phase 7 검증 환경
+제품 서비스와 분리된 Compose test profile의 e2e 컨테이너가 실제 frontend→API→Worker 흐름을 검사한다. frontend의 네트워크 namespace를 공유해 localhost 보안 컨텍스트를 사용한다. 고정 Playwright 이미지/브라우저 버전으로 세 브라우저와 모바일 크기를 재현하며 제품 API에 테스트용 장애 주입 경로를 추가하지 않는다. 기존 단위/통합/프로세스 장애 검증은 validate_phase7.py에서 조합한다. 자세한 실행·복원은 RUNBOOK, 포트폴리오 서술은 PORTFOLIO를 따른다. 제품 스키마/상태 전환은 Phase 6과 같고 0005를 유지한다.

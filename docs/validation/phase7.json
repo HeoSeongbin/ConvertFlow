@@ -1,0 +1,85 @@
+{
+  "project": "convertflow-phase7-clean-final-20261029",
+  "steps": [
+    {
+      "name": "ready",
+      "exitCode": 0,
+      "seconds": 3.22
+    },
+    {
+      "name": "idle",
+      "exitCode": 0,
+      "seconds": 0.83
+    },
+    {
+      "name": "smoke",
+      "exitCode": 0,
+      "seconds": 5.47
+    },
+    {
+      "name": "smoke_phase2",
+      "exitCode": 0,
+      "seconds": 8.67
+    },
+    {
+      "name": "smoke_phase6",
+      "exitCode": 0,
+      "seconds": 3.19
+    },
+    {
+      "name": "schema",
+      "exitCode": 0,
+      "seconds": 1.0
+    },
+    {
+      "name": "e2e",
+      "exitCode": 0,
+      "seconds": 68.03
+    },
+    {
+      "name": "e2e-queued",
+      "exitCode": 0,
+      "seconds": 8.86
+    },
+    {
+      "name": "phase3-isolated",
+      "exitCode": 0,
+      "seconds": 4.69
+    },
+    {
+      "name": "phase4-isolated",
+      "exitCode": 0,
+      "seconds": 55.38
+    },
+    {
+      "name": "compose-faults",
+      "exitCode": 0,
+      "seconds": 120.64
+    },
+    {
+      "name": "restore",
+      "exitCode": 0,
+      "seconds": 6.7
+    },
+    {
+      "name": "services",
+      "exitCode": 0,
+      "seconds": 0.38
+    }
+  ],
+  "date": "2026-10-29 Asia/Seoul",
+  "backend": {
+    "windows": 82,
+    "linux": 82
+  },
+  "frontendUnit": 15,
+  "e2e": {
+    "normal": 12,
+    "queued": 3,
+    "retries": 0
+  },
+  "scope": "Same host, new Compose project and empty volumes; remote GitHub Actions not executed",
+  "originalStackRestored": true,
+  "originalSchema": "0005",
+  "priorPhase6JobPreserved": "939c7a73-1217-401d-92c2-998b77b3520d"
+}

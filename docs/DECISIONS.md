@@ -137,3 +137,13 @@ opaque RGB 입력은 EXIF 정규화 후 RGB를 직접 PDF 인코딩한다. 불�
 
 ## ADR-039 Phase 6 검증 경계 — 채택
 실제 브라우저에서 선택/순서/옵션→변환→3페이지 색상 순서/전환·닫기/재열기·테마 저장·모바일 이력을 검증한다. 새 테스트 Job만 storage 권한 오류로 실패시키고 즉시 복구한 뒤 UI 수동 재시도로 이전 오류/Attempt 보존을 검사한다. Worker 일시 중지로 대기 취소를 확인하고 정상 복원한다. 이는 Worker 강제 종료 복구 검증을 새로 수행한 것이 아니며 기존 Lease/복구 구현은 변경하지 않는다. 임시 모바일 검증 HTML은 제품에 남기지 않고 스크린샷·재현 기록만 보존한다. 원격 CI는 정의만 갱신한다.
+
+## ADR-040 Phase 7 재현 가능한 실제 브라우저 E2E — 채택
+Playwright 1.64.1과 공식 noble 이미지의 SHA256을 고정한다. Compose test profile에만 e2e 서비스를 추가해 제품 기동에는 브라우저가 필요 없다. Chromium·Firefox·모바일 크기 WebKit에서 실제 Nginx→API→DB/Redis/Worker→PDF를 사용하며 Job 상태 응답을 모킹하지 않는다. PDF Canvas 중앙 픽셀로 빨강→초록→파랑 순서를 확인하고 다운로드 바이트, 타 workspace 404, 실패 Attempt, 테마 보존, 다운로드 네트워크 차단/복구를 검사한다. 대기 취소는 Worker를 정지한 별도 @queued 실행으로 결정적으로 검증한다. retries=0이며 실패 trace·스크린샷과 HTML/JSON 결과를 보존한다.
+
+Windows Firefox spawn UNKNOWN과 컨테이너 http://frontend의 비보안 origin을 실제 실행에서 발견했다. 테스트 컨테이너는 frontend 네트워크 namespace를 공유하고 http://localhost로 접근해 제품의 localhost 보안 컨텍스트(crypto.randomUUID)를 그대로 검증한다. 제품 코드를 테스트용으로 완화하거나 브라우저 보안 옵션을 끄지 않는다. 모바일 WebKit은 실제 iOS/Safari 기기가 아니다.
+
+## ADR-041 Phase 7 검증 실행과 결과 보존 — 채택
+validate_phase7.py는 활성 Job이 없는지 확인한 뒤 기존 smoke·스키마·E2E·대기 취소를 실행한다. --faults에서 Phase 3/4 전용 테스트 프로세스와 실제 SIGKILL·SIGSTOP·Compose 서비스 장애 검증을 재사용한다. COMPOSE_PROJECT_NAME을 자식에게 전달해 별도 빈 볼륨 환경에서도 같은 명령으로 실행한다. 각 명령 exit code·시간·로그를 artifacts/phase7에 기록하며 외부 명령 timeout은 900초다. 실패 시 finally로 서비스를 시작하고 최종 ps를 남긴다. 볼륨 삭제는 하지 않는다. 호스트 강제 종료는 finally를 보장하지 못하므로 RUNBOOK에 수동 복원 명령을 둔다.
+
+CI는 동일 실행기를 호출하고 실패해도 검증 로그·E2E 결과를 7일 artifact로 보관한다. trace에는 테스트 cookie 등이 포함될 수 있으므로 Git/공개 포트폴리오에는 포함하지 않는다. CI 정의 갱신은 원격 실행 성공과 구분한다. API/Worker/DB 상태 머신·마이그레이션·제품 의존성은 변경하지 않는다. 테스트/포트폴리오 단계 이후의 추가 기능은 별도 요청 범위로 남긴다.

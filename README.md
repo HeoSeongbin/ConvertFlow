@@ -1,7 +1,20 @@
 # ConvertFlow
-이미지 업로드 요청과 PDF 변환을 분리하는 비동기 문서 처리 플랫폼입니다. **Phase 6 — UI/UX 개선**까지 구현했습니다. 실제 실행 결과는 [진행 현황](docs/PROGRESS.md)에 기록합니다.
+이미지 업로드 요청과 PDF 변환을 분리하는 비동기 문서 처리 플랫폼입니다. **Phase 7 — 자동화 테스트 및 포트폴리오**까지 구현·로컬 검증했습니다. 실제 브라우저 E2E와 장애 재현 실행기를 제공합니다. 실제 실행 결과는 [진행 현황](docs/PROGRESS.md)에 기록합니다.
 
 React → FastAPI → PostgreSQL Outbox → Dispatcher → Redis → Linux Celery Worker → 공유 스토리지로 처리합니다. DB를 상태의 기준으로 사용하고 큐에는 Job UUID와 실행 세대만 전달합니다.
+
+```mermaid
+flowchart LR
+  UI[React / Nginx] --> API[FastAPI 검증·조회]
+  API --> DB[(PostgreSQL / Outbox)]
+  Dispatcher --> DB
+  Dispatcher --> Redis[(Redis)]
+  Redis --> Worker[Celery PDF 변환]
+  Worker --> DB
+  API --> Storage[(공유 파일 볼륨)]
+  Worker --> Storage
+  Observer[Worker·큐 관측] --> DB
+```
 
 ## 구현 기능
 - PNG/JPEG/BMP/WEBP/TIFF 다중 업로드와 파일별 검증·제거·순서 변경
@@ -96,24 +109,26 @@ Compose 기동 후 루트에서:
 ```bash
 python scripts/smoke.py
 python scripts/smoke_phase2.py
+python scripts/smoke_phase6.py
+python scripts/validate_phase7.py --faults
 docker compose exec -T api alembic check
 docker compose logs -f api worker dispatcher
 ```
-백엔드 **Windows·Linux 각각 82개 테스트**, 프런트 **15개 테스트·타입 검사·빌드**가 통과했습니다. 실제 32페이지 PDF·36개 이벤트의 역방향 커서/기존 API·권한을 검증했습니다. 브라우저에서는 오류 파일 제거·순서 변경→A4 가로 3페이지 변환→실제 PDF 페이지 렌더링/전환·테마 저장, 대기 취소·저장소 오류 후 수동 재시도와 Attempt 보존, 모듈 로드 실패의 콘솔 격리·복귀를 확인했습니다. 390px iframe에서 모바일 카드·필터·상세 이동·미리보기도 확인했으며 실제 모바일 기기/Safari 테스트는 아닙니다. 이전 Phase 5의 부하·메모리 결과도 보존합니다. 원격 GitHub Actions는 정의만 갱신했고 실행하지 않았습니다. 자세한 결과는 [진행 현황](docs/PROGRESS.md)을 확인하세요.
+백엔드 **Windows·Linux 각각 82개**, 프런트 단위 **15개**, Linux Playwright **15개**(일반 12+Worker 정지 중 대기 취소 3)가 통과했습니다. 제품/E2E 타입 검사·Ruff·빌드도 통과했습니다. 별도 빈 볼륨 Compose 프로젝트에서 migration·API/Worker smoke·실제 SIGKILL/SIGSTOP·중복 메시지/fencing·자동/수동 재시도·Redis/PostgreSQL 중단과 복귀를 재현했습니다. 원래 데이터와 스택은 보존합니다. 모바일 WebKit은 에뮬레이션이며 실제 모바일 기기/Safari 검증이 아닙니다. Windows 호스트 Firefox 실행 오류는 남아 있어 공식 검증은 고정 Linux 컨테이너를 사용합니다. 기존 TestClient deprecation 경고가 있습니다. 원격 GitHub Actions는 정의를 갱신했고 이번에 실행하지 않았습니다. [실행 요약](docs/validation/phase7.json)과 [진행 현황](docs/PROGRESS.md)에 실패·수정·최종 결과를 기록합니다.
 
 실제 Phase 3 장애 주입 테스트는 일반 Dispatcher를 잠시 중지한 전용 테스트 프로세스에서만 실행합니다. 운영 코드에 오류 주입 플래그는 없습니다. 실행·복원 방법은 [검증 절차](docs/TEST-SCENARIOS.md)를 확인하세요.
 
 ## 설계와 남은 범위
 조건부 DB Claim과 Job별 고유 Result, 상태 갱신과 동일 트랜잭션의 완료 이벤트로 중복 반영을 방지합니다. 임시 PDF를 전체 검증한 뒤 동일 볼륨에서 원자 이동하며 SUCCESS 결과만 다운로드합니다. DB와 파일시스템 사이 원자성을 보장하지는 않습니다.
 
-**다음 Phase 7:** 자동화 테스트·E2E·장애 시나리오와 포트폴리오 정리입니다. 자동 파일 만료·청소, 사용자 계정 인증, 요청 Idempotency-Key, 장기 soak·누수 및 실사용 파일 성능 평가는 아직 없습니다. 파일을 새로 업로드하면 별도 Job입니다. 장애 시 즉시 복구를 보장하지 않으며 DB·스토리지가 사용 가능하고 Dispatcher가 돌아야 합니다.
+**Phase 7 검증 도구:** 고정된 Linux Playwright 컨테이너에서 Chromium·Firefox·모바일 크기 WebKit을 실행합니다. 실제 PDF 색상 순서/렌더링·다운로드·권한·실패 이력·네트워크 오류 복구·테마 저장과 Worker 중지 중 대기 취소를 검사합니다. `validate_phase7.py --faults`로 실제 프로세스·서비스 장애까지 재현하고 단계별 로그와 종료 코드를 보존합니다. [실행·복원 절차](docs/RUNBOOK.md)와 [포트폴리오 설명](docs/PORTFOLIO.md)을 확인하세요. 이후 추가 Phase는 정의되어 있지 않습니다. 자동 파일 만료·청소, 사용자 계정 인증, 요청 Idempotency-Key, 장기 soak·누수 및 실사용 파일 성능 평가는 아직 없습니다. 파일을 새로 업로드하면 별도 Job입니다. 장애 시 즉시 복구를 보장하지 않으며 DB·스토리지가 사용 가능하고 Dispatcher가 돌아야 합니다.
 
 ```bash
 docker compose down  # 종료, 볼륨 데이터 보존
 ```
-스택: React 19.1 / TypeScript 5.8 / Vite 6.4 / TanStack Query / Axios / PDF.js 6.4.299 / Lucide / Vitest, Python 3.12 / FastAPI / SQLAlchemy / Alembic / psycopg / Celery / Redis / Pillow / pypdf, PostgreSQL 16.9 / Redis 7.4.4 / Nginx. PDF.js만 추가하고 package-lock에 고정했으며 npm audit는 검사 시점 알려진 취약점 0건이었습니다. UI는 단일 콘솔 내 화면 전환을 사용합니다.
+스택: React 19.1 / TypeScript 5.8 / Vite 6.4 / TanStack Query / Axios / PDF.js 6.4.299 / Lucide / Vitest, Python 3.12 / FastAPI / SQLAlchemy / Alembic / psycopg / Celery / Redis / Pillow / pypdf, PostgreSQL 16.9 / Redis 7.4.4 / Nginx. 의존성은 lockfile에 고정하며 Playwright는 개발/검증 전용입니다. npm audit는 검사 시점 알려진 취약점 0건이었습니다. UI는 단일 콘솔 내 화면 전환을 사용합니다.
 
 ![Phase 6 실제 PDF 미리보기](docs/screenshots/phase6-preview.png)
 [모바일 미리보기](docs/screenshots/phase6-mobile-preview.png) · [모바일 이력](docs/screenshots/phase6-mobile-history.png) · [이전 Dashboard](docs/screenshots/phase5-dashboard.png)
 
-[전체 요구사항](PROJECT.md) · [진행 현황](docs/PROGRESS.md) · [아키텍처](docs/ARCHITECTURE.md) · [ADR](docs/DECISIONS.md) · [API](docs/API.md) · [검증 절차](docs/TEST-SCENARIOS.md)
+[포트폴리오](docs/PORTFOLIO.md) · [실행/장애 시연](docs/RUNBOOK.md) · [전체 요구사항](PROJECT.md) · [진행 현황](docs/PROGRESS.md) · [아키텍처](docs/ARCHITECTURE.md) · [ADR](docs/DECISIONS.md) · [API](docs/API.md) · [검증 절차](docs/TEST-SCENARIOS.md)

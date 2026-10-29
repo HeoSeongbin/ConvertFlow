@@ -1,5 +1,58 @@
 # 개발 진행 현황
 
+기준일: 2026-10-29 (Asia/Seoul)
+현재 Phase: **Phase 7 — 자동화 테스트 및 포트폴리오 완료**.
+다음 우선순위: 사용자 요청 시 커밋·푸시 후 원격 GitHub Actions 결과를 확인한다. PROJECT의 Phase 0~7 범위는 완료했으며 추가 제품 기능은 별도 범위를 정한다.
+
+## 시작 상태와 범위
+AGENTS → PROJECT → PROGRESS → DECISIONS → README를 확인했다. main과 origin/main은 821994c로 같고 작업 트리는 깨끗했다. 실제 소스와 기존 테스트·Compose/CI 정의를 비교해 Phase 6까지 완료, 저장소 Playwright E2E 부재를 확인했다. API/Worker의 변환 책임, PostgreSQL 상태·세대·Lease·Attempt·Result·오류 이력은 변경하지 않는다. 제품 DB migration은 없으며 0005를 유지한다.
+
+## 구현한 검증과 문서
+- 고정 Playwright 1.64.1 및 공식 Linux 이미지 SHA256, Compose test profile의 별도 e2e 컨테이너
+- Chromium/Firefox desktop·모바일 크기 WebKit의 실제 API→Worker→PDF 4개 시나리오×3, Worker 중지 전용 대기 취소 1개×3
+- TIFF/PNG 순서·A4 가로/여백, 실제 Canvas 빨강→초록→파랑·페이지 경계, 다운로드 PDF 바이트, 다른 workspace 404, 이력 UUID 검색·수평 overflow 검사
+- 빈 파일·위장 PNG 거부, 실제 변환 실패/Attempt·PDF 미공개, 다운로드 네트워크 차단/복귀, 테마와 선택 작업 reload 보존
+- validate_phase7.py: 활성 Job 사전 검사, 기존 smoke·Alembic·E2E·대기 취소·선택적 실제 장애 검증, 단계별 exit code/시간/로그, finally 서비스 복원·ps
+- CI 공통 실행기·E2E 타입 검사·Ruff format 검사·실패 자료/보고서 7일 artifact 보존
+- README 아키텍처 다이어그램, RUNBOOK 실행/복원/장애 시연, PORTFOLIO 문제·해결·근거·한계, 테스트 설명/ADR-040·041
+
+## 실제 실행 결과
+| 항목 | 결과 |
+|---|---|
+| Windows 백엔드 | 82 passed, 기존 TestClient httpx deprecation warning 1건 |
+| Linux API 이미지 | 82 passed, 같은 deprecation 및 /app pytest cache 쓰기 권한 warning 각 1건 |
+| 프런트 | 15 passed, strict TypeScript(제품+E2E)·production build 통과 |
+| 정적 검증 | Ruff format/check·compileall·git diff --check 통과 |
+| 의존성 | Playwright·Node 타입은 개발 의존성만 추가, npm audit 검사 시점 알려진 취약점 0건 |
+| Linux 브라우저 | 최종 빈 볼륨 환경 일반 E2E **12 passed (55.1초)** + 대기 취소 **3 passed (7.7초)**, 세 브라우저 모두 통과 |
+| 전체 빈 볼륨/장애 | convertflow-phase7-clean-final-20261029에서 up --build --wait·기존 smoke 1/2/6·Alembic check 통과. Phase 3 재시도/취소(4.69초), Phase 4 실제 kill/fencing/중복(55.38초), Compose Worker/Redis/DB 장애(120.64초) 모두 exit 0 |
+| 복원 | 실행기 restore·services exit 0. 검증 스택은 down(볼륨 보존)하고 원래 convertflow 스택 복원 완료. API/Worker/frontend/PostgreSQL/Redis healthy, Dispatcher/Observer 실행, Worker 1개, migrate exit 0. 0005(head) 및 기존 Phase 6 Job 939c7a73… SUCCESS 보존 확인 |
+| 원격 CI | 정의 갱신, 실제 GitHub Actions 실행 미수행 |
+
+## 발견한 문제와 처리
+1. Windows 호스트 Firefox의 browserType.launch spawn UNKNOWN으로 실행 전 실패했다. 공식 Linux 컨테이너에서 Chromium/Firefox/WebKit 모두 실제 실행했다. 호스트 Firefox 정상 작동을 주장하지 않는다.
+2. 테스트 컨테이너가 http://frontend에 접근하면 비보안 origin이라 crypto.randomUUID가 없어 파일 선택이 실패했다. frontend 네트워크 namespace 공유+localhost 접근으로 제품의 localhost 보안 컨텍스트를 유지했다. 제품 코드나 브라우저 보안 설정을 완화하지 않았다.
+3. 첫 대기 취소 E2E는 동일한 대기 중 문구가 숨겨진 상세에도 있어 strict locator 위반으로 실패했다. 상태 배지를 명시하도록 수정했다. 실패 실행의 finally 복원/ps exit 0을 확인했고 새 프로젝트/빈 볼륨에서 최종 15개 E2E 모두 통과했다.
+4. Vitest가 Playwright spec을 수집하지 않도록 e2e 디렉터리를 제외하고 별도 tsconfig로 E2E도 타입 검사한다. 테스트 보고서가 Docker 빌드 컨텍스트/Git에 섞이지 않도록 제외했다.
+
+검증 근거: [단계별 종료 코드·시간](validation/phase7.json). 재시도 Job **249face5-6d2e-452c-a107-077772d598b2**는 Attempt 5개를 보존했다. 인코딩 kill **6149fa0b-61dd-4b2c-bcd7-e08815d186a1**, 게시 kill **eb07ecdf-4ebb-4698-bb03-f969e3f1f198**, stale owner **f1bc1c0a-83cd-4200-b3b8-383dc198992d**, Compose prefork kill **ba2537dc-9605-4c59-8d02-73b3440cb995**, Redis 복귀 **dcaaf45f-c3bb-4f3c-9720-8d235b4b6a72**, PostgreSQL Lease 복구 **5e90e43a-f56f-416e-8af0-3c73311692ff**. 이 Job들은 분리한 검증 프로젝트의 보존 볼륨에 있으며 원래 브라우저 작업공간 데이터와 섞이지 않는다.
+
+## 변경 파일
+- frontend/playwright.config.ts·tsconfig.e2e.json·Dockerfile.e2e·e2e/workflow.spec.ts·e2e/README.md·합성 PNG/TIFF fixture
+- frontend/package.json·package-lock.json·.dockerignore, docker-compose.yml, .gitignore
+- scripts/validate_phase7.py, .github/workflows/ci.yml
+- README, docs/ARCHITECTURE·TEST-SCENARIOS·DECISIONS·PROGRESS, 신규 RUNBOOK·PORTFOLIO·validation/phase7.json
+
+## 제약과 후속 작업
+실제 모바일 기기/Safari·전문 접근성 감사·장기 soak/누수·실사용 사진 성능·원격 CI 실행은 미검증이다. 빈 볼륨 검증은 같은 Windows/Docker Desktop 호스트에서 캐시된 이미지 레이어를 사용할 수 있는 별도 Compose 프로젝트이며 새 물리 머신 검증은 아니다. 기존 Phase 5 성능 원본과 한계를 유지하고 성능 수치를 새 측정으로 바꾸지 않았다.
+
+계정/운영자 인증, 파일 만료·orphan 청소, 요청 Idempotency-Key, JSON 로그 통일은 남아 있다. 현재 localhost 개발용이다. Phase 7 완료 뒤 커밋·푸시와 원격 CI 결과 확인이 다음 작업이며, 추가 제품 기능은 별도 범위를 정한 뒤 진행한다. 현재 실행 차단 요인은 없다. 검증용 두 프로젝트의 볼륨은 보존했으며 서비스/네트워크는 down으로 종료했다. 이번 요청으로 커밋·푸시는 수행하지 않았다.
+
+---
+
+# Phase 6 기록 (이전 실행)
+
+
 기준일: 2026-10-28 (Asia/Seoul)
 현재 Phase: **Phase 6 — UI/UX 개선 완료**.
 다음 우선순위: **Phase 7 — 자동화 테스트 및 포트폴리오**. 이번에는 Phase 6 범위만 구현했다.
