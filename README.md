@@ -38,6 +38,61 @@ flowchart LR
 - 고정 내비게이션·선택 Job 상세 이동, 모바일 작업 카드·화면 선택, 테마 저장
 - 최신 이벤트 30개부터 더 보기, 오류·재시도·취소 필터와 원인별 안내
 
+## 사용 기술과 선택 이유
+
+아래 내용은 실제 소스와 의존성 파일을 기준으로 정리했습니다. 언어·라이브러리가 제공하는 장점과 이 프로젝트에서 구현·검증한 효과를 구분하며, 성능 수치는 [측정 결과](docs/benchmarks/README.md)의 조건에서만 해석합니다. 세부 설계 근거는 [ADR](docs/DECISIONS.md)을 참고하세요.
+
+### 언어와 화면 구성
+
+| 기술 | 사용한 이유 | 프로젝트에서 얻은 장점과 효과 |
+|---|---|---|
+| **Python 3.12** | FastAPI·Celery·Pillow·pypdf를 같은 언어로 연결하고 API와 Worker가 도메인 모델을 공유하기 위해 선택했습니다. | 입력 검증·변환 옵션·상태 전환·스토리지 코드를 재사용하면서 실행 프로세스는 분리했습니다. 타입 힌트와 Converter `Protocol`로 변환기의 입력·출력 계약을 표현했습니다. CPU 작업의 병렬 처리는 Celery 프로세스가 담당합니다. |
+| **TypeScript strict mode** | Job 상태, 변환 옵션, API 응답과 nullable 시각을 명시적으로 다루기 위해 사용했습니다. | 상태 문자열·옵션 값·누락 가능한 필드를 컴파일 단계에서 검사합니다. 제품 코드와 E2E 코드 모두 타입 검사 대상입니다. 서버 응답의 런타임 검증을 대신하는 것은 아닙니다. |
+| **HTML·CSS** | 업로드·작업 상세·모바일 카드 등 현재 화면에 필요한 구조와 스타일을 직접 구성하기 위해 사용했습니다. | 시맨틱 요소·접근성 이름·키보드 버튼·반응형 배치·Light/Dark 모드를 구현했습니다. CSS 프레임워크 없이 화면을 구성하고 브라우저 E2E에서 모바일 크기 레이아웃을 확인했습니다. |
+
+### 프런트엔드 라이브러리와 도구
+
+| 기술 | 사용한 이유 | 프로젝트에서 얻은 장점과 효과 |
+|---|---|---|
+| **React / React DOM** | 업로드·Job 상세·Attempt·이벤트·모니터링 화면을 상태에 따라 갱신하고 컴포넌트로 분리하기 위해 사용했습니다. | 화면별 책임을 나누고 동일 Job의 진행·종료 상태를 UI에 반영합니다. PDF 뷰어에는 지연 로드와 Error Boundary를 적용해 모듈 실패가 콘솔 전체를 중단하지 않도록 했습니다. |
+| **TanStack Query** | 서버의 Job·목록·이벤트·Attempt 조회와 polling, 캐시 갱신을 관리하기 위해 사용했습니다. | Job ID·세대·페이지별 query key로 조회를 구분하고 재시도·취소 후 관련 캐시를 무효화합니다. 상세 polling은 종료 상태에서 멈추고, 이벤트는 최신 30개와 커서 기반 더 보기로 가져옵니다. |
+| **Axios** | 공통 API 설정, multipart 업로드 진행률, PDF binary 응답과 요청 취소를 처리하기 위해 사용했습니다. | 파일 전송 진행률을 Worker 변환 진행률과 구분하고, JSON·binary 오류 응답에 공통 안내를 제공합니다. PDF 미리보기 종료 시 요청을 취소할 수 있습니다. |
+| **PDF.js (`pdfjs-dist`)** | 실제 생성된 PDF를 브라우저에서 확인하면서 서버의 변환 책임을 Worker에 유지하기 위해 선택했습니다. | 인증된 기존 download API의 결과를 한 페이지씩 Canvas로 렌더링합니다. 외부 CDN 없이 로컬 asset을 사용하며 32 MiB 결과 제한·Canvas 크기 제한·render/document 정리를 적용했습니다. 실제 페이지 색상 순서와 오류 후 복귀를 E2E로 검증했습니다. |
+| **Lucide React** | 탐색·업로드·다운로드 등 화면 동작에 일관된 아이콘을 적용하기 위해 사용했습니다. | React 컴포넌트 형태로 크기와 스타일을 맞추고 텍스트·접근성 이름과 함께 동작을 표시합니다. |
+| **Vite** | React·TypeScript 개발 서버와 배포용 정적 asset 빌드를 구성하기 위해 사용했습니다. | 로컬 개발의 API 프록시와 production build를 제공하고, PDF 뷰어·엔진을 별도 청크로 지연 로드합니다. 배포 asset은 Nginx가 제공합니다. Node.js는 개발·빌드·테스트 도구 실행에 사용합니다. |
+
+### 백엔드와 문서 처리
+
+| 기술 | 사용한 이유 | 프로젝트에서 얻은 장점과 효과 |
+|---|---|---|
+| **FastAPI / Uvicorn** | 파일 접수·작업 관리 API와 실행 서버를 구성하고, 요청·응답 스키마 및 OpenAPI 문서를 제공하기 위해 사용했습니다. | API는 파일 검증·저장·Job 등록·조회에 집중하고 실제 PDF 생성은 별도 Worker에 맡깁니다. Swagger에서 API 계약을 확인할 수 있습니다. 비동기 변환의 핵심은 API와 Worker 분리이며 웹 프레임워크만으로 보장되지는 않습니다. |
+| **Pydantic / pydantic-settings** | 변환 옵션·요청 모델과 환경 설정을 명시적으로 검증하기 위해 사용했습니다. | 잘못된 옵션 범위·미지원 필드를 거부하고, Heartbeat 간격이 Lease의 절반 미만인지 시작 시 검사합니다. API와 Worker가 같은 옵션 모델을 사용합니다. |
+| **SQLAlchemy / psycopg** | PostgreSQL 모델·트랜잭션·조건부 갱신·행 잠금과 실제 DB 연결을 구현하기 위해 사용했습니다. | Job·Attempt·Result·Event·Outbox를 연결하고 상태 전환과 이력 저장을 같은 트랜잭션에 묶었습니다. 행 잠금·세대/Lease 검사·고유 제약을 함께 사용해 중복 결과 반영을 막습니다. ORM 자체가 멱등성을 자동 보장하는 것은 아닙니다. |
+| **Alembic** | 스키마 변경을 버전으로 관리하고 기존 데이터가 있는 환경에도 적용하기 위해 사용했습니다. | Compose의 migrate 단계에서 스키마를 먼저 적용하고 기존 작업·오류·결과를 보존합니다. 현재 버전은 0005이며, 데이터 이력을 잃는 일부 downgrade는 차단했습니다. |
+| **Celery** | HTTP 요청과 분리된 작업 실행, Linux Worker 프로세스 및 Worker 확장을 구성하기 위해 선택했습니다. | API 응답 후 백그라운드에서 변환하고 여러 Worker로 작업을 나눌 수 있습니다. 중복 전달·장애 복구는 DB Claim·Attempt·Lease·fencing과 결합해 처리합니다. 재시도 예약의 기준은 PostgreSQL이며 Celery 설정만으로 복구를 보장하지 않습니다. |
+| **redis-py / Kombu** | Redis 연결과 Celery의 브로커 전송·큐 관측 경로를 사용하기 위해 포함했습니다. Kombu는 Celery의 전송 계층 의존성입니다. | UUID·실행 세대 메시지를 전달하고 Observer에서 ready 큐 메시지를 관측합니다. Redis의 큐 수와 DB의 Job 수를 구분해 표시합니다. |
+| **Pillow** | PNG/JPEG/BMP/WEBP/TIFF 디코딩, 입력 검증, EXIF 방향·투명 배경 처리와 이미지 PDF 인코딩에 사용했습니다. | 여러 이미지와 TIFF 프레임을 지정 순서로 변환합니다. 불필요한 RGB→RGBA 복사를 줄인 구현은 동일 합성 입력의 새 프로세스 측정에서 peak RSS 중앙값이 163.6→115.4 MiB로 감소했고 출력 이미지 해시가 일치했습니다. |
+| **pypdf** | PDF 페이지 조합·변환 행렬·cropbox와 생성 결과 파싱 검증에 사용했습니다. | Pillow가 인코딩한 페이지에 A4/Letter·방향·여백·contain/cover를 적용하고 최종 페이지 수와 PDF 구조를 확인한 뒤 게시합니다. PDF Writer가 객체를 보관하므로 완전한 스트리밍 변환은 아닙니다. |
+| **python-multipart** | 다중 파일과 options JSON을 같은 multipart 요청으로 접수하기 위해 사용했습니다. | 사용자가 지정한 파일 순서와 변환 옵션을 하나의 작업으로 등록합니다. 파일 크기·형식·페이지 제한은 별도 애플리케이션 검증으로 적용합니다. |
+
+파일 checksum은 Python 표준 라이브러리 `hashlib`의 스트리밍 해시를 사용합니다. 파일 전체를 한 번에 메모리에 올리던 방식과 비교해 64 MiB 합성 파일의 별도 프로세스 peak RSS 중앙값이 110.2→46.3 MiB로 감소했고 digest가 일치했습니다. 이는 라이브러리 교체 효과가 아니라 파일을 읽는 방식을 변경한 결과입니다.
+
+### 저장소·실행 환경·검증 도구
+
+| 기술 | 사용한 이유 | 프로젝트에서 얻은 장점과 효과 |
+|---|---|---|
+| **PostgreSQL** | 작업 상태·오류·실행 이력을 프로세스 재시작 후에도 보존하고 트랜잭션·행 잠금·고유 제약을 사용하기 위해 선택했습니다. | Job과 Outbox를 함께 저장하고 재시도·취소·복구·결과 확정의 기준으로 사용합니다. 실제 DB 중단·복귀 후 작업 복구와 이력 보존을 검증했습니다. |
+| **Redis** | API와 Worker 사이 메시지 브로커로 사용했습니다. | 작업 접수와 소비 시점을 분리합니다. 원본 파일이나 최종 상태를 큐에 넣지 않고, 브로커 중단 중 등록한 작업은 PostgreSQL Outbox를 통해 복귀 후 전달합니다. |
+| **Docker / Docker Compose / named volume** | API·Worker·Dispatcher·Observer·DB·Redis·frontend를 분리하고 의존 서비스 기동·공유 저장소를 재현하기 위해 사용했습니다. | Linux Worker와 DB migration 실행 순서를 구성하고 컨테이너 교체 후에도 원본·결과·DB 데이터를 보존합니다. 같은 호스트의 별도 프로젝트·빈 볼륨에서 전체 기동과 장애 시나리오를 검증했습니다. |
+| **Nginx** | 프런트 정적 파일과 같은 origin의 API 프록시를 제공하기 위해 사용했습니다. | 브라우저는 상대 API 경로를 사용하고, PDF.js Worker에는 JavaScript MIME을 적용합니다. Docker DNS 주소 재해석으로 API 컨테이너 교체 후 이전 IP를 계속 참조하던 문제를 해결했습니다. |
+| **pytest / HTTPX** | 변환·상태 전환·API 권한·마이그레이션 테스트와 실제 HTTP smoke를 작성하기 위해 사용했습니다. | 단위/통합 테스트와 실제 Compose 연동을 나눠 검증합니다. TestClient 및 별도 HTTP 클라이언트로 성공·실패·권한·재시도·취소 계약을 확인합니다. |
+| **Vitest** | TypeScript의 파일 검사·순서 변경·오류 해석·미리보기 크기 계산 등 브라우저 독립 로직을 검사하기 위해 사용했습니다. | 네트워크나 Worker 없이 빠르게 실행하는 단위 검증과 실제 브라우저 E2E를 분리했습니다. |
+| **Playwright** | 실제 브라우저에서 업로드부터 Worker 처리·PDF 렌더링·다운로드까지 연결된 흐름을 확인하기 위해 사용했습니다. | 고정 Linux 이미지에서 Chromium·Firefox·모바일 크기 WebKit을 실행하고, 네트워크 차단·복귀와 대기 취소를 검증합니다. 실패 trace·스크린샷을 남기며 실제 모바일 기기 검증과는 구분합니다. |
+| **Ruff / TypeScript compiler** | Python 코드 스타일·정적 오류와 TypeScript 타입 오류를 실행 전 검사하기 위해 사용했습니다. | Python format/lint와 제품·E2E 타입 검사를 같은 검증 절차에 포함했습니다. 런타임 동작은 별도 테스트로 확인합니다. |
+| **GitHub Actions** | 단위 검사·빌드·Compose/E2E·장애 검증 명령을 저장소의 자동 검증 절차로 정의하기 위해 사용했습니다. | 로컬 실행기와 동일한 명령을 CI에서 호출하고 실패 자료를 7일 보관하도록 구성했습니다. 원격 실행 성공 여부는 로컬 통과 기록과 별도로 확인해야 합니다. |
+
+현재 UI는 단일 콘솔의 화면 선택과 React 상태, 일반 CSS로 구성합니다. 초기 요구사항에 나열한 React Router·Zustand·React Hook Form·Zod·Recharts·Tailwind CSS와 img2pdf는 현재 구현에 사용하지 않습니다. 직접 의존성과 전이 의존성의 고정 버전은 [프런트 package.json](frontend/package.json), [프런트 lockfile](frontend/package-lock.json), [백엔드 직접 의존성](backend/requirements.txt), [백엔드 lockfile](backend/requirements.lock.txt)에서 확인할 수 있습니다.
+
 ## 실행
 Docker Desktop Linux 엔진을 실행하고 루트에서:
 ```bash

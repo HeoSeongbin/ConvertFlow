@@ -4,6 +4,9 @@
 현재 Phase: **Phase 7 — 자동화 테스트 및 포트폴리오 완료**.
 다음 우선순위: 사용자 요청 시 커밋·푸시 후 원격 GitHub Actions 결과를 확인한다. PROJECT의 Phase 0~7 범위는 완료했으며 추가 제품 기능은 별도 범위를 정한다.
 
+## 후속 README 보완 (2026-10-29)
+사용자 요청으로 실제 언어·라이브러리·인프라·검증 도구의 선택 이유와 적용 효과를 README에 추가했다. package.json·requirements·API 모델·Converter·설정·Nginx·ADR·기존 측정 기록을 대조했다. 설계상 장점과 측정한 성능 효과를 구분하고, 초기 요구사항에만 있으며 사용하지 않은 라이브러리 및 원격 CI 미확인 범위를 명시했다. 새 기술적 결정이나 제품 코드·의존성 변경은 없으므로 기존 ADR을 근거로 연결했다. 검증: Windows 백엔드 82 passed(기존 TestClient deprecation warning 1건), 프런트 15 passed, 제품/E2E 타입 검사·production build·Ruff format/check·README 로컬 링크·git diff --check 통과. 문서 변경으로 Compose/E2E/성능 측정은 재실행하지 않았으며 기존 결과와 구분한다. 커밋·푸시는 수행하지 않았다.
+
 ## 시작 상태와 범위
 AGENTS → PROJECT → PROGRESS → DECISIONS → README를 확인했다. main과 origin/main은 821994c로 같고 작업 트리는 깨끗했다. 실제 소스와 기존 테스트·Compose/CI 정의를 비교해 Phase 6까지 완료, 저장소 Playwright E2E 부재를 확인했다. API/Worker의 변환 책임, PostgreSQL 상태·세대·Lease·Attempt·Result·오류 이력은 변경하지 않는다. 제품 DB migration은 없으며 0005를 유지한다.
 
